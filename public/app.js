@@ -19,7 +19,7 @@ const S = {
   premoves: [], premoveColor: null,
   arrows: [], marks: new Set(),
   promo: null, drag: null, right: null,
-  party: { code: null, gameNo: 0, oppSeated: false, oppHere: false, rematchMe: false, rematchThem: false, connected: false },
+  party: { code: null, gameNo: 0, oppSeated: false, oppHere: false, rematchMe: false, rematchThem: false, connected: false, chat: [] },
   review: null,          // set while Game Review is open
 };
 // The position being shown: the live game, or the move picked in Game Review.
@@ -90,7 +90,8 @@ function premoveDests(m, sq) {
   const add = (F, R) => { if (onBoard(F, R)) out.push(sqName(F, R)); };
   if (p.type === 'p') {
     const d = p.color === 'w' ? 1 : -1;
-    add(f, r + d); if (r === (p.color === 'w' ? 2 : 7)) add(f, r + 2 * d);
+    // Pawns can only go straight onto EMPTY squares (they never capture forwards).
+    if (!m.get(sqName(f, r + d))) { add(f, r + d); if (r === (p.color === 'w' ? 2 : 7) && !m.get(sqName(f, r + 2 * d))) add(f, r + 2 * d); }
     add(f - 1, r + d); add(f + 1, r + d);
   } else if (p.type === 'n') {
     for (const [a, b] of [[1, 2], [2, 1], [-1, 2], [-2, 1], [1, -2], [2, -1], [-1, -2], [-2, -1]]) add(f + a, r + b);
@@ -481,6 +482,7 @@ function renderSide() {
   const party = S.mode === 'party';
   $('#panel-title').textContent = party ? 'Party game' : 'Play on this screen';
   $('#hint-pre').classList.toggle('hidden', !party);
+  $('#chat').classList.toggle('hidden', !party);
   const chip = $('#code-chip');
   chip.classList.toggle('hidden', !party || !S.party.code);
   chip.textContent = S.party.code || '';
@@ -846,7 +848,7 @@ function joinParty(code) {
 }
 function leaveParty() {
   if (S.mode === 'party') send({ type: 'leave' });
-  S.party.code = null; ss.del('cp_code');
+  S.party.code = null; ss.del('cp_code'); S.party.chat = []; renderChat();
   if (ws) { const w = ws; ws = null; w.close(); }
   S.party.connected = false;
   if (location.hash) history.replaceState(null, '', location.pathname);
@@ -863,7 +865,50 @@ function onMessage(m) {
     return;
   }
   if (m.type === 'state') onState(m);
+  else if (m.type === 'chat') onChat(m);
 }
+
+// ---------- Chat (party only) ----------
+function onChat(m) {
+  if (m.reset) S.party.chat = [];
+  const seen = new Set(S.party.chat.map((x) => x.id));
+  const fresh = m.msgs.filter((x) => !seen.has(x.id));
+  S.party.chat.push(...fresh);
+  if (S.party.chat.length > 100) S.party.chat.splice(0, S.party.chat.length - 100);
+  renderChat();
+  const theirs = !m.reset && fresh.filter((x) => !x.mine);
+  if (theirs && theirs.length) {
+    blip(660, 0.12, 0.08, 'sine'); blip(990, 0.14, 0.07, 'sine', 0.07);
+    if (!chatVisible()) toast('💬 Friend: ' + theirs[theirs.length - 1].text);
+  }
+}
+function chatVisible() {
+  const r = $('#chat-log').getBoundingClientRect();
+  return r.height > 0 && r.top < innerHeight - 20 && r.bottom > 20 && !$('#chat').classList.contains('hidden') && !S.review;
+}
+function renderChat() {
+  const log = $('#chat-log');
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 30;
+  log.replaceChildren();
+  if (!S.party.chat.length) {
+    const e = document.createElement('div'); e.className = 'empty'; e.textContent = 'Say hi to your friend 👋'; log.append(e);
+  }
+  for (const x of S.party.chat) {
+    const d = document.createElement('div'); d.className = 'cm ' + (x.mine ? 'me' : 'them');
+    const b = document.createElement('b'); b.textContent = x.mine ? 'You' : 'Friend';
+    d.append(b, document.createTextNode(x.text)); // textContent only: never inject HTML
+    log.append(d);
+  }
+  if (atBottom || S.party.chat.length && S.party.chat[S.party.chat.length - 1].mine) log.scrollTop = log.scrollHeight;
+}
+function sendChat(text) {
+  text = text.trim().slice(0, 200);
+  if (!text) return;
+  if (!S.party.connected) return toast('Not connected — message not sent');
+  send({ type: 'chat', text });
+}
+$('#chat-form').onsubmit = (e) => { e.preventDefault(); const i = $('#chat-input'); sendChat(i.value); i.value = ''; };
+$('#chat-quick').onclick = (e) => { const b = e.target.closest('button'); if (b) sendChat(b.textContent); };
 
 function onState(s) {
   pendingLobby = false;

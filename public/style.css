@@ -19,7 +19,7 @@
   --mark: rgba(235, 97, 80, 0.82);
   color-scheme: dark;
 }
-* { box-sizing: border-box; }
+*, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
 body {
   background: var(--bg);
@@ -169,7 +169,7 @@ body {
 .code-chip:hover { background: #000; }
 .status { background: var(--bg-dark); border-radius: 6px; padding: 10px 12px; font-weight: 600; min-height: 42px; }
 .status.warn { color: #ffb86b; }
-.moves { flex: 1; overflow-y: auto; background: var(--bg-dark); border-radius: 6px; font-size: 14px; min-height: 120px; }
+.moves { flex: 1; overflow-y: auto; min-height: 0; background: var(--bg-dark); border-radius: 6px; font-size: 14px; min-height: 120px; }
 .moves .row { display: grid; grid-template-columns: 44px 1fr 1fr; padding: 3px 8px; }
 .moves .row:nth-child(even) { background: rgba(255,255,255,.03); }
 .moves .num { color: #8b8987; }
@@ -245,3 +245,19 @@ body {
 .rv-mv:hover { background: rgba(255,255,255,.08); }
 .rv-nav { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; flex: none; }
 .rv-nav .btn { padding: 10px 0; font-size: 16px; }
+
+/* Party chat */
+.chat { flex: 1; min-height: 170px; display: flex; flex-direction: column; gap: 6px; background: var(--bg-dark); border-radius: 6px; padding: 8px; }
+.chat-log { flex: 1; min-height: 60px; overflow-y: auto; font-size: 14px; display: flex; flex-direction: column; gap: 3px; overflow-wrap: anywhere; }
+.chat-log .empty { color: #777; text-align: center; margin: auto; font-size: 13px; }
+.chat-log .cm b { margin-right: 6px; }
+.chat-log .cm.me b { color: #9bc35a; }
+.chat-log .cm.them b { color: #f0a85a; }
+.chat-quick { display: flex; gap: 5px; overflow-x: auto; scrollbar-width: none; }
+.chat-quick button { flex: none; border: 0; border-radius: 12px; padding: 4px 10px; background: var(--btn); color: #ddd; font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; }
+.chat-quick button:hover { background: #4a4845; }
+.chat-form { display: flex; gap: 6px; }
+.chat-form input { flex: 1; min-width: 0; border: 1px solid #4a4845; border-radius: 6px; background: var(--bg-darker); color: #fff; padding: 8px 10px; font: inherit; font-size: 14px; }
+.chat-form input:focus { outline: none; border-color: var(--green); }
+.chat-form .btn { padding: 0 14px; }
+@media (max-width: 860px) { .chat { min-height: 220px; max-height: 300px; } }

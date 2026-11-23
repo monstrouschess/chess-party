@@ -80,6 +80,16 @@
       </div>
       <div class="status" id="status"></div>
       <div class="moves" id="moves"></div>
+      <div class="chat hidden" id="chat">
+        <div class="chat-log" id="chat-log"></div>
+        <div class="chat-quick" id="chat-quick">
+          <button type="button">gg</button><button type="button">Good move!</button><button type="button">Oops 😅</button><button type="button">😂</button><button type="button">Rematch?</button>
+        </div>
+        <form class="chat-form" id="chat-form" autocomplete="off">
+          <input id="chat-input" maxlength="200" placeholder="Send a message…" aria-label="Chat message" enterkeyhint="send">
+          <button class="btn" type="submit">Send</button>
+        </form>
+      </div>
       <div class="panel-buttons">
         <button class="btn" id="btn-resign">🏳️ Resign</button>
         <button class="btn btn-green" id="btn-again">New game</button>
