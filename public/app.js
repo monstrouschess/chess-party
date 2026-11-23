@@ -108,7 +108,8 @@ function premoveDests(m, sq) {
     if (p.type !== 'r') dirs.push([1, 1], [1, -1], [-1, 1], [-1, -1]);
     for (const [a, b] of dirs) for (let F = f + a, R = r + b; onBoard(F, R); F += a, R += b) out.push(sqName(F, R));
   }
-  return out;
+  // Never land on your own piece (no "eating" your own men) or on a king.
+  return out.filter((t) => { const q = m.get(t); return !q || (q.color !== p.color && q.type !== 'k'); });
 }
 
 function clearPremoves() { S.premoves = []; S.premoveColor = null; }
