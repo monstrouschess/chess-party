@@ -1,5 +1,6 @@
 import { Chess } from '/lib/chess.js';
 import { resultOf, CODE_CHARS, CODE_LEN } from '/shared.js';
+import { analyseGame, GRADES, GRADE_ORDER, winPct, evalText } from '/review.js';
 
 const $ = (s) => document.querySelector(s);
 const FILES = 'abcdefgh';
@@ -19,7 +20,10 @@ const S = {
   arrows: [], marks: new Set(),
   promo: null, drag: null, right: null,
   party: { code: null, gameNo: 0, oppSeated: false, oppHere: false, rematchMe: false, rematchThem: false, connected: false },
+  review: null,          // set while Game Review is open
 };
+// The position being shown: the live game, or the move picked in Game Review.
+const view = () => (S.review ? S.review.view : S.chess);
 
 const ss = {
   get(k) { try { return sessionStorage.getItem(k); } catch { return null; } },
@@ -48,13 +52,13 @@ function sqAt(e) {
 // ---------- Who may move ----------
 const turn = () => S.chess.turn();
 function canMove(color) {
-  if (S.result || S.promo) return false;
+  if (S.result || S.promo || S.review) return false;
   if (S.mode === 'local') return color === turn();
   if (S.mode === 'party') return S.party.oppSeated && color === S.myColor && turn() === S.myColor;
   return false;
 }
 function canPre(color) {
-  if (S.result) return false;
+  if (S.result || S.review) return false;
   // Premoves are only for party games; on one shared screen they'd just get in the way.
   if (S.mode === 'party') return S.party.oppSeated && color === S.myColor && turn() !== S.myColor;
   return false;
@@ -64,7 +68,7 @@ function canPre(color) {
 // The position as it will look after all queued premoves (what we draw).
 function virtualPieces() {
   const m = new Map();
-  for (const row of S.chess.board()) for (const c of row) if (c) m.set(c.square, { type: c.type, color: c.color });
+  for (const row of view().board()) for (const c of row) if (c) m.set(c.square, { type: c.type, color: c.color });
   for (const pm of S.premoves) {
     const p = m.get(pm.from);
     if (!p) continue;
@@ -262,7 +266,7 @@ const squaresEl = $('#squares');
 const sqEl = (sq) => squaresEl.querySelector(`[data-sq="${sq}"]`);
 
 function kingSquare(color) {
-  for (const row of S.chess.board()) for (const c of row) if (c && c.type === 'k' && c.color === color) return c.square;
+  for (const row of view().board()) for (const c of row) if (c && c.type === 'k' && c.color === color) return c.square;
   return null;
 }
 
@@ -270,9 +274,13 @@ function render(anim) {
   const m = virtualPieces();
   const pre = new Set(S.premoves.flatMap((p) => [p.from, p.to]));
   const hl = new Set();
-  if (S.lastMove) { hl.add(S.lastMove.from); hl.add(S.lastMove.to); }
+  // In Game Review, colour the shown move by its grade and put a badge on it.
+  const rv = S.review, rvMove = rv && rv.idx > 0 ? rv.moves[rv.idx - 1] : null;
+  const rvGrade = rvMove && rv.data ? GRADES[rv.data.grades[rv.idx - 1].grade] : null;
+  const last = rv ? rvMove : S.lastMove;
+  if (last) { hl.add(last.from); hl.add(last.to); }
   if (S.selected) hl.add(S.selected);
-  const check = S.chess.inCheck() ? kingSquare(turn()) : null;
+  const check = view().inCheck() ? kingSquare(view().turn()) : null;
   const dests = new Set(S.dests);
 
   let html = '';
@@ -283,7 +291,7 @@ function render(anim) {
       const cls = ['sq', (f + r) % 2 === 1 ? 'd' : 'l'];
       if (S.marks.has(sq)) cls.push('mark');
       else if (pre.has(sq)) cls.push('pre');
-      else if (hl.has(sq)) cls.push('hl');
+      else if (hl.has(sq)) cls.push(rvGrade ? 'rv' : 'hl');
       if (sq === check) cls.push('check');
       const p = m.get(sq);
       if (dests.has(sq)) cls.push('dest', p ? 'cap' : 'empty');
@@ -292,7 +300,9 @@ function render(anim) {
       if (col === 0) inner += `<span class="coord rank">${r}</span>`;
       if (row === 7) inner += `<span class="coord file">${sq[0]}</span>`;
       if (p) inner += `<div class="pc ${p.color}${p.type}${S.drag && S.drag.from === sq ? ' ghosted' : ''}"></div>`;
-      html += `<div class="${cls.join(' ')}" data-sq="${sq}">${inner}</div>`;
+      if (rvGrade && rvMove.to === sq) inner += `<span class="gbadge" style="background:${rvGrade.color}">${rvGrade.sym}</span>`;
+      const style = rvGrade && hl.has(sq) ? ` style="--rvc:${rvGrade.color}"` : '';
+      html += `<div class="${cls.join(' ')}" data-sq="${sq}"${style}>${inner}</div>`;
     }
   }
   squaresEl.innerHTML = html;
@@ -300,6 +310,7 @@ function render(anim) {
   drawArrows();
   renderPromo();
   renderOverlay();
+  renderEvalBar();
   renderSide();
 }
 
@@ -320,6 +331,14 @@ function drawArrows() {
   const svg = $('#arrows');
   const list = [...S.arrows];
   if (S.right && S.right.to !== S.right.from) list.push({ ...S.right, preview: true });
+  // Game Review: show the engine's best move when the played move wasn't it.
+  const rv = S.review;
+  if (rv && rv.data && rv.idx > 0) {
+    const g = rv.data.grades[rv.idx - 1], mv = rv.moves[rv.idx - 1];
+    if (g.bestUci && g.bestUci !== mv.from + mv.to + (mv.promotion || '') && !['best', 'great', 'brilliant', 'forced'].includes(g.grade)) {
+      list.unshift({ from: g.bestUci.slice(0, 2), to: g.bestUci.slice(2, 4), color: 'rgb(150,190,70)' });
+    }
+  }
   const center = (sq) => { const [r, c] = rc(sq); return [c * 100 + 50, r * 100 + 50]; };
   let out = '';
   for (const a of list) {
@@ -339,8 +358,9 @@ function drawArrows() {
     pts[0] = [x0 + sx * 22, y0 + sy * 22];
     const d = 'M' + [...pts, [bx, by]].map((p) => p.join(' ')).join(' L');
     const poly = [[x1, y1], [bx - uy * hw, by + ux * hw], [bx + uy * hw, by - ux * hw]].map((p) => p.join(',')).join(' ');
-    out += `<g opacity="${a.preview ? 0.6 : 0.82}"><path d="${d}" stroke="rgb(255,170,0)" stroke-width="20" fill="none" stroke-linejoin="miter"/>` +
-      `<polygon points="${poly}" fill="rgb(255,170,0)"/></g>`;
+    const col = a.color || 'rgb(255,170,0)';
+    out += `<g opacity="${a.preview ? 0.6 : 0.82}"><path d="${d}" stroke="${col}" stroke-width="20" fill="none" stroke-linejoin="miter"/>` +
+      `<polygon points="${poly}" fill="${col}"/></g>`;
   }
   svg.innerHTML = out;
 }
@@ -385,12 +405,12 @@ $('#board-overlay').addEventListener('click', (e) => {
 
 function material() {
   let w = 0, b = 0;
-  for (const row of S.chess.board()) for (const c of row) if (c) (c.color === 'w' ? (w += VALUE[c.type]) : (b += VALUE[c.type]));
+  for (const row of view().board()) for (const c of row) if (c) (c.color === 'w' ? (w += VALUE[c.type]) : (b += VALUE[c.type]));
   return w - b;
 }
 
 function playerBar(color) {
-  const captured = S.chess.history({ verbose: true }).filter((m) => m.color === color && m.captured).map((m) => m.captured);
+  const captured = view().history({ verbose: true }).filter((m) => m.color === color && m.captured).map((m) => m.captured);
   const order = 'pnbrq';
   captured.sort((a, b) => order.indexOf(a) - order.indexOf(b));
   const opp = color === 'w' ? 'b' : 'w';
@@ -436,6 +456,10 @@ function renderSide() {
   $('#bar-top').innerHTML = playerBar(top);
   $('#bar-bottom').innerHTML = playerBar(bottom);
 
+  $('#review-panel').classList.toggle('hidden', !S.review);
+  $('#play-panel').classList.toggle('hidden', !!S.review);
+  if (S.review) { renderReview(); return; }
+
   const [txt, warn] = statusText();
   const st = $('#status'); st.textContent = txt; st.classList.toggle('warn', warn);
 
@@ -469,8 +493,201 @@ function renderSide() {
     again.textContent = S.party.rematchMe ? 'Rematch sent…' : S.party.rematchThem ? 'Accept rematch' : 'Rematch';
     again.disabled = !S.result || S.party.rematchMe || !S.party.oppSeated;
   } else { again.textContent = 'New game'; again.disabled = false; }
+  $('#btn-review').classList.toggle('hidden', !S.result || !hist.length);
   if (S.result && !$('#modal').classList.contains('hidden')) fillModal();
 }
+
+// ---------- Game Review ----------
+let reviewCache = { key: null, data: null };
+const gIcon = (g, small) => `<span class="gicon${small ? ' sm' : ''}" style="background:${GRADES[g].color}" title="${GRADES[g].label}">${GRADES[g].sym}</span>`;
+
+function startReview() {
+  const moves = S.chess.history({ verbose: true });
+  if (!moves.length) return toast('No moves to review yet.');
+  hideModal(); clearSel(); clearPremoves(); cancelDrag();
+  S.arrows = []; S.marks.clear();
+  const key = moves.map((m) => m.lan).join(' ');
+  S.review = { moves, key, idx: 0, data: reviewCache.key === key ? reviewCache.data : null, done: 0, total: moves.length + 1, orientation0: S.orientation, view: new Chess() };
+  $('#game').classList.add('reviewing');
+  setIdx(S.review.data ? moves.length : 0, true);
+  if (!S.review.data) runAnalysis(S.review);
+}
+
+async function runAnalysis(rv) {
+  try {
+    const data = await analyseGame(rv.moves, (done, total) => {
+      if (S.review !== rv) return;
+      rv.done = done; rv.total = total; renderReview();
+    }, () => S.review !== rv);
+    if (!data || S.review !== rv) return;
+    rv.data = data; reviewCache = { key: rv.key, data };
+    sound('end');
+    render();
+  } catch (e) {
+    console.error(e);
+    if (S.review === rv) { rv.error = "Couldn't start the chess engine. Try refreshing the page."; renderReview(); }
+  }
+}
+
+function exitReview(redraw = true) {
+  if (!S.review) return;
+  S.orientation = S.review.orientation0;
+  S.review = null; S.arrows = []; S.marks.clear();
+  $('#game').classList.remove('reviewing');
+  if (redraw) render();
+}
+
+function setIdx(i, quiet) {
+  const rv = S.review; if (!rv) return;
+  i = Math.max(0, Math.min(rv.moves.length, i));
+  const forward = i === rv.idx + 1;
+  rv.idx = i;
+  const c = new Chess();
+  for (const m of rv.moves.slice(0, i)) c.move({ from: m.from, to: m.to, promotion: m.promotion });
+  rv.view = c;
+  S.arrows = []; S.marks.clear();
+  const mv = rv.moves[i - 1];
+  if (!quiet && mv) sound(mv.san.includes('+') || mv.san.includes('#') ? 'check' : mv.captured ? 'capture' : mv.san.startsWith('O-O') ? 'castle' : 'move');
+  render(forward && mv ? mv : null);
+}
+
+function renderEvalBar() {
+  const bar = $('#evalbar');
+  const rv = S.review;
+  bar.classList.toggle('hidden', !rv);
+  if (!rv) return;
+  const ev = rv.data ? rv.data.evals[rv.idx].ev : { cp: 0 };
+  const pct = winPct(ev);
+  const flip = S.orientation === 'b';
+  bar.classList.toggle('flip', flip);
+  bar.querySelector('.ev-fill').style.height = `${pct}%`;
+  const txt = bar.querySelector('.ev-txt');
+  txt.textContent = rv.data ? evalText(ev).replace(/^[+-]/, '').replace(/^-?M/, 'M') : '';
+  const whiteAhead = pct >= 50;
+  txt.className = 'ev-txt ' + ((whiteAhead !== flip) ? 'bottom' : 'top') + (whiteAhead ? ' on-white' : ' on-black');
+}
+
+function playerName(c) {
+  if (S.mode === 'party') return c === S.myColor ? 'You' : 'Friend';
+  return NAMES[c];
+}
+
+function renderReview() {
+  const rv = S.review; if (!rv) return;
+  const d = rv.data;
+  // Progress bar while Stockfish works.
+  const prog = $('#rv-progress');
+  prog.classList.toggle('hidden', !!d);
+  if (!d) {
+    const pct = Math.round((rv.done / rv.total) * 100);
+    prog.querySelector('.rv-bar > div').style.width = pct + '%';
+    prog.querySelector('span').textContent = rv.error || `Analyzing your game with Stockfish… ${pct}%`;
+  }
+  $('#rv-graph').classList.toggle('hidden', !d);
+  $('#rv-summary').classList.toggle('hidden', !d);
+
+  // Coach box for the current move.
+  const coach = $('#rv-coach');
+  if (rv.idx === 0) {
+    coach.innerHTML = `<div><b>Starting position</b><div class="muted small">Use ◀ ▶ or your arrow keys to step through the game.</div></div>`;
+  } else {
+    const mv = rv.moves[rv.idx - 1];
+    const num = `${Math.ceil(rv.idx / 2)}${mv.color === 'w' ? '.' : '...'}`;
+    if (!d) coach.innerHTML = `<div><b>${num} ${mv.san}</b><div class="muted small">Grades show up when the analysis finishes.</div></div>`;
+    else {
+      const g = d.grades[rv.idx - 1], G = GRADES[g.grade];
+      const article = /^[aeiou]/i.test(G.label) ? 'an' : 'a';
+      const what = g.grade === 'best' ? 'is the best move' : g.grade === 'forced' ? 'is forced' : `is ${article} ${G.label.toLowerCase()} move`;
+      const title = ['inaccuracy', 'mistake', 'blunder', 'miss'].includes(g.grade) ? `is ${article} ${G.label.toLowerCase()}` : what;
+      const ev = d.evals[rv.idx].ev;
+      const showBest = g.bestSan && !['best', 'great', 'brilliant', 'forced'].includes(g.grade);
+      coach.innerHTML = `${gIcon(g.grade)}<div class="rv-coach-body"><div class="rv-coach-top"><b style="color:${G.color}">${num} ${mv.san} ${title}</b>` +
+        `<span class="ev-chip ${winPct(ev) >= 50 ? 'w' : 'b'}">${evalText(ev)}</span></div>` +
+        (g.note ? `<div class="small">${g.note}</div>` : '') +
+        (showBest ? `<div class="small muted">Best was <b class="best-san">${g.bestSan}</b> (${evalText(g.bestEval)})</div>` : '') + `</div>`;
+    }
+  }
+
+  if (d) {
+    renderGraph(d);
+    // Accuracy + counts.
+    const counts = { w: {}, b: {} };
+    d.grades.forEach((g, i) => { const c = rv.moves[i].color; counts[c][g.grade] = (counts[c][g.grade] || 0) + 1; });
+    const acc = (c) => (d.accuracy[c] == null ? '–' : d.accuracy[c].toFixed(1));
+    let rows = '';
+    for (const g of GRADE_ORDER) {
+      rows += `<div class="rv-row"><span class="n">${counts.w[g] || 0}</span><span class="lbl">${gIcon(g, true)} ${GRADES[g].label}</span><span class="n">${counts.b[g] || 0}</span></div>`;
+    }
+    $('#rv-summary').innerHTML =
+      `<div class="rv-acc"><div class="acc-box w"><span>${playerName('w')}</span><b>${acc('w')}</b></div>` +
+      `<div class="acc-label">Accuracy</div>` +
+      `<div class="acc-box b"><span>${playerName('b')}</span><b>${acc('b')}</b></div></div>` +
+      `<details class="rv-table"><summary>Move breakdown</summary>${rows}</details>`;
+    const open = rv.tableOpen; if (open) $('#rv-summary details').open = true;
+    $('#rv-summary details').ontoggle = (e) => { rv.tableOpen = e.target.open; };
+  }
+
+  // Move list with grade icons.
+  const notable = ['brilliant', 'great', 'inaccuracy', 'mistake', 'miss', 'blunder'];
+  let h = '';
+  for (let i = 0; i < rv.moves.length; i += 2) {
+    const cell = (j) => {
+      const m = rv.moves[j]; if (!m) return '<span></span>';
+      const g = d && d.grades[j].grade;
+      return `<span class="mv rv-mv${j + 1 === rv.idx ? ' last' : ''}" data-i="${j + 1}">${g && notable.includes(g) ? gIcon(g, true) : ''}${m.san}</span>`;
+    };
+    h += `<div class="row"><span class="num">${i / 2 + 1}.</span>${cell(i)}${cell(i + 1)}</div>`;
+  }
+  const list = $('#rv-moves');
+  list.innerHTML = h;
+  list.querySelector('.last')?.scrollIntoView({ block: 'nearest' });
+
+  const again = $('#rv-again');
+  if (S.mode === 'party') {
+    again.textContent = S.party.rematchMe ? 'Rematch sent…' : S.party.rematchThem ? 'Accept rematch' : 'Rematch';
+    again.disabled = S.party.rematchMe || !S.party.oppSeated;
+  } else { again.textContent = 'New game'; again.disabled = false; }
+}
+
+function renderGraph(d) {
+  const svg = $('#rv-graph');
+  const n = d.evals.length - 1 || 1;
+  const pts = d.evals.map((e, i) => [(i / n) * 400, 80 - winPct(e.ev) * 0.8]);
+  let out = `<rect width="400" height="80" fill="#403d39"/>`;
+  out += `<path d="M0 80 L${pts.map((p) => p.map((v) => v.toFixed(1)).join(' ')).join(' L')} L400 80 Z" fill="#fff"/>`;
+  out += `<line x1="0" y1="40" x2="400" y2="40" stroke="#888" stroke-width="0.6" stroke-dasharray="3 3"/>`;
+  const x = (S.review.idx / n) * 400;
+  out += `<line x1="${x}" y1="0" x2="${x}" y2="80" stroke="#81b64c" stroke-width="2"/>`;
+  d.grades.forEach((g, i) => {
+    if (!['brilliant', 'great', 'mistake', 'miss', 'blunder'].includes(g.grade)) return;
+    const [px, py] = pts[i + 1];
+    out += `<circle cx="${px}" cy="${py}" r="3.5" fill="${GRADES[g.grade].color}" stroke="#222" stroke-width="0.8"/>`;
+  });
+  svg.innerHTML = out;
+}
+
+$('#rv-graph').addEventListener('click', (e) => {
+  const rv = S.review; if (!rv) return;
+  const b = e.currentTarget.getBoundingClientRect();
+  setIdx(Math.round(((e.clientX - b.left) / b.width) * rv.moves.length), true);
+});
+$('#rv-moves').addEventListener('click', (e) => { const i = e.target.closest('[data-i]')?.dataset.i; if (i) setIdx(+i, true); });
+$('#rv-first').onclick = () => setIdx(0, true);
+$('#rv-prev').onclick = () => setIdx(S.review.idx - 1, true);
+$('#rv-next').onclick = () => setIdx(S.review.idx + 1);
+$('#rv-last').onclick = () => setIdx(S.review.moves.length, true);
+$('#rv-flip').onclick = () => { S.orientation = S.orientation === 'w' ? 'b' : 'w'; render(); };
+$('#rv-close').onclick = () => exitReview();
+$('#rv-again').onclick = () => { if (S.mode === 'local') exitReview(false); playAgain(); };
+$('#btn-review').onclick = () => startReview();
+$('#modal-review').onclick = () => startReview();
+document.addEventListener('keydown', (e) => {
+  if (!S.review || e.target.closest('input, textarea')) return;
+  const k = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
+  if (k) { e.preventDefault(); k > 0 ? setIdx(S.review.idx + 1) : setIdx(S.review.idx - 1, true); }
+  else if (e.key === 'Home') setIdx(0, true);
+  else if (e.key === 'End') setIdx(S.review.moves.length, true);
+});
 
 // ---------- Game over ----------
 function fillModal() {
@@ -481,6 +698,7 @@ function fillModal() {
   $('#modal-title').textContent = title;
   $('#modal-sub').textContent = `by ${r.reason}`;
   $('#modal-icon').textContent = icon;
+  $('#modal-review').classList.toggle('hidden', !S.chess.history().length);
   const a = $('#modal-again');
   if (S.mode === 'party') {
     a.textContent = S.party.rematchMe ? 'Rematch sent…' : S.party.rematchThem ? 'Accept rematch' : 'Rematch';
@@ -567,6 +785,7 @@ function show(screen) {
 }
 
 function resetBoardState() {
+  exitReview(false);
   S.chess = new Chess(); S.result = null; S.lastMove = null;
   clearSel(); clearPremoves(); cancelDrag(); S.promo = null; S.arrows = []; S.marks.clear();
   hideModal(); resetResign();

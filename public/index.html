@@ -42,6 +42,7 @@
     <div class="board-col">
       <div class="player-bar" id="bar-top"></div>
       <div class="board-wrap">
+        <div id="evalbar" class="hidden"><div class="ev-fill"></div><span class="ev-txt"></span></div>
         <div id="board">
           <div id="squares"></div>
           <svg id="arrows" viewBox="0 0 800 800"></svg>
@@ -53,6 +54,26 @@
     </div>
 
     <aside class="panel">
+      <div id="review-panel" class="hidden">
+        <div class="panel-head">
+          <div class="panel-title">★ Game Review</div>
+          <button class="btn btn-flat btn-small" id="rv-close">✕ Close</button>
+        </div>
+        <div id="rv-progress" class="rv-progress"><div class="rv-bar"><div></div></div><span>Analyzing…</span></div>
+        <svg id="rv-graph" viewBox="0 0 400 80" preserveAspectRatio="none"></svg>
+        <div id="rv-coach" class="rv-coach"></div>
+        <div id="rv-summary"></div>
+        <div class="moves" id="rv-moves"></div>
+        <div class="rv-nav">
+          <button class="btn" id="rv-first" title="Start">⏮</button>
+          <button class="btn" id="rv-prev" title="Back (←)">◀</button>
+          <button class="btn" id="rv-next" title="Next (→)">▶</button>
+          <button class="btn" id="rv-last" title="End">⏭</button>
+          <button class="btn" id="rv-flip" title="Flip board">⇅</button>
+        </div>
+        <button class="btn btn-green" id="rv-again">New game</button>
+      </div>
+      <div id="play-panel">
       <div class="panel-head">
         <div class="panel-title" id="panel-title">Play on this screen</div>
         <div class="code-chip hidden" id="code-chip" title="Click to copy"></div>
@@ -63,9 +84,11 @@
         <button class="btn" id="btn-resign">🏳️ Resign</button>
         <button class="btn btn-green" id="btn-again">New game</button>
       </div>
+      <button class="btn btn-green hidden" id="btn-review">★ Game Review</button>
       <button class="btn btn-flat" id="btn-menu">← Back to menu</button>
       <p class="hint">Right-click a square to mark it red. Right-click + drag to draw an arrow. Left-click clears them.
         <span id="hint-pre">Move during your friend's turn to <b>premove</b>.</span></p>
+      </div>
     </aside>
   </main>
 
@@ -76,7 +99,8 @@
       <div class="modal-trophy" id="modal-icon">🏆</div>
       <h2 id="modal-title">White won</h2>
       <p class="muted" id="modal-sub">by checkmate</p>
-      <button class="btn btn-green btn-wide" id="modal-again">Rematch</button>
+      <button class="btn btn-green btn-wide" id="modal-review">★ Game Review</button>
+      <button class="btn btn-wide" id="modal-again">Rematch</button>
       <button class="btn btn-wide" id="modal-view">View board</button>
     </div>
   </div>
