@@ -55,7 +55,7 @@ function canMove(color) {
 }
 function canPre(color) {
   if (S.result) return false;
-  if (S.mode === 'local') return color !== turn();
+  // Premoves are only for party games; on one shared screen they'd just get in the way.
   if (S.mode === 'party') return S.party.oppSeated && color === S.myColor && turn() !== S.myColor;
   return false;
 }
@@ -455,6 +455,7 @@ function renderSide() {
 
   const party = S.mode === 'party';
   $('#panel-title').textContent = party ? 'Party game' : 'Play on this screen';
+  $('#hint-pre').classList.toggle('hidden', !party);
   const chip = $('#code-chip');
   chip.classList.toggle('hidden', !party || !S.party.code);
   chip.textContent = S.party.code || '';
