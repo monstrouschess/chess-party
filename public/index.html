@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chess Party</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>♞</text></svg>">
+  <link rel="stylesheet" href="/pieces.css">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="logo" href="/" id="logo"><span class="logo-knight">♞</span> Chess Party</a>
+  </header>
+
+  <!-- Menu -->
+  <main id="lobby" class="screen">
+    <div class="lobby-card">
+      <div class="lobby-hero">
+        <div class="mini-board" aria-hidden="true"></div>
+        <div>
+          <h1>Play chess with a friend</h1>
+          <p class="muted">No accounts. Share one screen, or send a friend a 5-letter code.</p>
+        </div>
+      </div>
+      <button class="btn btn-green btn-big" id="btn-local">
+        <span class="btn-icon">🖥️</span><span><b>Play on this screen</b><small>Two players, one board</small></span>
+      </button>
+      <button class="btn btn-big" id="btn-create">
+        <span class="btn-icon">🎉</span><span><b>Create party</b><small>Get a code to send a friend</small></span>
+      </button>
+      <form class="join-row" id="join-form" autocomplete="off">
+        <input id="join-code" maxlength="5" placeholder="ENTER CODE" spellcheck="false" aria-label="Party code">
+        <button class="btn" type="submit" id="btn-join">Join party</button>
+      </form>
+      <p class="lobby-error" id="lobby-error"></p>
+    </div>
+  </main>
+
+  <!-- Game -->
+  <main id="game" class="screen hidden">
+    <div class="board-col">
+      <div class="player-bar" id="bar-top"></div>
+      <div class="board-wrap">
+        <div id="board">
+          <div id="squares"></div>
+          <svg id="arrows" viewBox="0 0 800 800"></svg>
+          <div id="promo" class="hidden"></div>
+          <div id="board-overlay" class="hidden"></div>
+        </div>
+      </div>
+      <div class="player-bar" id="bar-bottom"></div>
+    </div>
+
+    <aside class="panel">
+      <div class="panel-head">
+        <div class="panel-title" id="panel-title">Play on this screen</div>
+        <div class="code-chip hidden" id="code-chip" title="Click to copy"></div>
+      </div>
+      <div class="status" id="status"></div>
+      <div class="moves" id="moves"></div>
+      <div class="panel-buttons">
+        <button class="btn" id="btn-resign">🏳️ Resign</button>
+        <button class="btn btn-green" id="btn-again">New game</button>
+      </div>
+      <button class="btn btn-flat" id="btn-menu">← Back to menu</button>
+      <p class="hint">Right-click a square to mark it red. Right-click + drag to draw an arrow. Left-click clears them.
+        Move during your friend's turn to <b>premove</b>.</p>
+    </aside>
+  </main>
+
+  <!-- Game over -->
+  <div id="modal" class="modal hidden">
+    <div class="modal-card">
+      <button class="modal-x" id="modal-x" aria-label="Close">✕</button>
+      <div class="modal-trophy" id="modal-icon">🏆</div>
+      <h2 id="modal-title">White won</h2>
+      <p class="muted" id="modal-sub">by checkmate</p>
+      <button class="btn btn-green btn-wide" id="modal-again">Rematch</button>
+      <button class="btn btn-wide" id="modal-view">View board</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
