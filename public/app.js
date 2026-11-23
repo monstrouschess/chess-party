@@ -1,5 +1,5 @@
 import { Chess } from '/lib/chess.js';
-import { resultOf, CODE_CHARS, CODE_LEN } from '/shared.js';
+import { resultOf, CODE_CHARS, CODE_LEN, TIME_CONTROLS, DEFAULT_TC, tcLabel, newClock, timeLeft, clockAfterMove, stopClock, timeoutResult } from '/shared.js';
 import { analyseGame, GRADES, GRADE_ORDER, winPct, evalText } from '/review.js';
 
 const $ = (s) => document.querySelector(s);
@@ -21,6 +21,9 @@ const S = {
   promo: null, drag: null, right: null,
   party: { code: null, gameNo: 0, oppSeated: false, oppHere: false, rematchMe: false, rematchThem: false, connected: false, chat: [] },
   review: null,          // set while Game Review is open
+  tc: DEFAULT_TC,        // time control picked on the menu
+  clock: null,           // { id, base, inc, w, b, running, since } or null for no timer
+  lowWarned: {},
 };
 // The position being shown: the live game, or the move picked in Game Review.
 const view = () => (S.review ? S.review.view : S.chess);
@@ -160,11 +163,14 @@ function userMove(from, to, dragged) {
 }
 
 function commit(from, to, promotion, dragged) {
+  if (flagIfOut()) return;
+  const mover = turn();
   let mv;
   try { mv = S.chess.move({ from, to, promotion }); } catch { mv = null; }
   if (!mv) { render(); return; }
   S.lastMove = { from: mv.from, to: mv.to };
   clearSel();
+  clockAfterMove(S.clock, mover, S.chess.history().length, Date.now());
   if (S.mode === 'party') send({ type: 'move', from, to, promotion });
   if (S.mode === 'local') {
     S.result = resultOf(S.chess);
@@ -393,6 +399,7 @@ function renderOverlay() {
     el.innerHTML = `<div class="wait-card"><h3>Waiting for your friend…</h3>
       <div class="muted">Send them this code. They click <b>Join party</b> and type it in.</div>
       <div class="big-code">${S.party.code || '·····'}</div>
+      <div class="muted" style="margin:-8px 0 14px">⏱️ ${tcLabel(S.clock ? S.clock.id : 'none')}</div>
       <div class="row"><button class="btn btn-green" data-copy="${S.party.code}">Copy code</button>
       <button class="btn" data-copy="${link}">Copy invite link</button></div>
       <div class="spinner"></div></div>`;
@@ -428,8 +435,9 @@ function playerBar(color) {
     dot = `<span class="dot ${on ? 'on' : 'off'}" title="${on ? 'Online' : 'Offline'}"></span>`;
   }
   const active = !S.result && turn() === color && (S.mode === 'local' || S.party.oppSeated);
-  return `<div class="avatar pc ${color}k"></div><div class="pinfo"><div class="pname">${name} ${dot}</div><div class="caps">${caps}</div></div>` +
-    `<div class="turn-pill ${active ? 'active' : ''}">${active ? 'To move' : ''}</div>`;
+  const right = S.clock ? `<div class="clock" data-clock="${color}"></div>`
+    : `<div class="turn-pill ${active ? 'active' : ''}">${active ? 'To move' : ''}</div>`;
+  return `<div class="avatar pc ${color}k"></div><div class="pinfo"><div class="pname">${name} ${dot}</div><div class="caps">${caps}</div></div>` + right;
 }
 
 function statusText() {
@@ -457,6 +465,7 @@ function renderSide() {
   const bottom = S.orientation, top = bottom === 'w' ? 'b' : 'w';
   $('#bar-top').innerHTML = playerBar(top);
   $('#bar-bottom').innerHTML = playerBar(bottom);
+  updateClocks();
 
   $('#review-panel').classList.toggle('hidden', !S.review);
   $('#play-panel').classList.toggle('hidden', !!S.review);
@@ -480,7 +489,7 @@ function renderSide() {
   }
 
   const party = S.mode === 'party';
-  $('#panel-title').textContent = party ? 'Party game' : 'Play on this screen';
+  $('#panel-title').textContent = (party ? 'Party game' : 'Play on this screen') + ' · ' + tcLabel(S.clock ? S.clock.id : 'none');
   $('#hint-pre').classList.toggle('hidden', !party);
   $('#chat').classList.toggle('hidden', !party);
   const chip = $('#code-chip');
@@ -710,6 +719,8 @@ function fillModal() {
 }
 function gameOver() {
   clearPremoves(); clearSel();
+  stopClock(S.clock, Date.now());
+  if (S.mode === 'local') saveLocal();
   sound('end');
   fillModal();
   setTimeout(() => { if (S.result) $('#modal').classList.remove('hidden'); }, 250);
@@ -789,6 +800,7 @@ function show(screen) {
 
 function resetBoardState() {
   exitReview(false);
+  S.clock = null; S.lowWarned = {};
   S.chess = new Chess(); S.result = null; S.lastMove = null;
   clearSel(); clearPremoves(); cancelDrag(); S.promo = null; S.arrows = []; S.marks.clear();
   hideModal(); resetResign();
@@ -796,12 +808,13 @@ function resetBoardState() {
 
 // Local mode
 function saveLocal() {
-  ss.set('cp_local', JSON.stringify({ moves: S.chess.history({ verbose: true }).map((m) => ({ from: m.from, to: m.to, promotion: m.promotion })), result: S.result }));
+  ss.set('cp_local', JSON.stringify({ moves: S.chess.history({ verbose: true }).map((m) => ({ from: m.from, to: m.to, promotion: m.promotion })), result: S.result, clock: S.clock }));
 }
 function startLocal(restore) {
   leaveParty();
   resetBoardState();
   S.mode = 'local'; S.orientation = 'w';
+  S.clock = newClock(S.tc);
   if (restore) {
     try {
       const d = JSON.parse(restore);
@@ -809,13 +822,14 @@ function startLocal(restore) {
       const h = S.chess.history({ verbose: true }); const l = h[h.length - 1];
       if (l) S.lastMove = { from: l.from, to: l.to };
       S.result = d.result || resultOf(S.chess);
+      S.clock = d.clock || null;
     } catch { S.chess = new Chess(); }
   }
   ss.set('cp_mode', 'local');
   saveLocal();
   show('game'); render();
 }
-function newLocalGame() { resetBoardState(); saveLocal(); sound('move'); render(); }
+function newLocalGame() { resetBoardState(); S.clock = newClock(S.tc); saveLocal(); sound('move'); render(); }
 
 // ---------- Party (WebSocket) ----------
 let ws = null, retry = 0, retryTimer = null;
@@ -839,7 +853,7 @@ function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
 function withSocket(fn) { if (ws && ws.readyState === 1) fn(); else connect(fn); }
 
 let pendingLobby = false;
-function createParty() { lobbyError(''); pendingLobby = true; withSocket(() => send({ type: 'create', token: TOKEN })); }
+function createParty() { lobbyError(''); pendingLobby = true; withSocket(() => send({ type: 'create', token: TOKEN, tc: S.tc })); }
 function joinParty(code) {
   code = code.toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (code.length !== CODE_LEN) return lobbyError(`Codes are ${CODE_LEN} characters long.`);
@@ -941,6 +955,8 @@ function onState(s) {
     S.chess = c;
     S.lastMove = last ? { from: last.from, to: last.to } : null;
   }
+  // Server clock: "elapsed" is how long the side to move has been thinking.
+  S.clock = s.clock ? { ...s.clock, id: s.tc, since: Date.now() - s.clock.elapsed } : null;
   const hadResult = !!S.result;
   S.result = s.result;
   if (arrived) sound(soundFor(arrived));
@@ -950,6 +966,69 @@ function onState(s) {
   else if (S.result && newGame && s.moves.length) { fillModal(); }
   if (arrived) setTimeout(tryPremove, 80);
 }
+
+// ---------- Clocks ----------
+function fmtClock(ms) {
+  ms = Math.max(0, ms);
+  const two = (n) => String(n).padStart(2, '0');
+  if (ms < 20000) return `0:${two(Math.floor(ms / 1000))}.${Math.floor((ms % 1000) / 100)}`;
+  const t = Math.ceil(ms / 1000), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  return h ? `${h}:${two(m)}:${two(s)}` : `${m}:${two(s)}`;
+}
+function updateClocks() {
+  if (!S.clock) return;
+  const now = Date.now();
+  const live = !S.result && (S.mode === 'local' || S.party.oppSeated);
+  for (const el of document.querySelectorAll('[data-clock]')) {
+    const c = el.dataset.clock, left = timeLeft(S.clock, c, now);
+    el.textContent = fmtClock(left);
+    el.classList.toggle('active', live && turn() === c);
+    el.classList.toggle('low', left > 0 && left < Math.min(20000, S.clock.base / 4));
+    el.classList.toggle('out', left <= 0);
+    // Warning beep at 10 seconds (in a party, only for your own clock).
+    if (live && S.clock.running === c && left > 0 && left < 10000 && S.clock.base >= 60000 && !S.lowWarned[c] &&
+        (S.mode === 'local' || c === S.myColor)) {
+      S.lowWarned[c] = true; blip(1046, 0.1, 0.1, 'square'); blip(1046, 0.1, 0.1, 'square', 0.16);
+    }
+  }
+}
+// Same screen: the browser decides when time is up. (In parties the server decides.)
+function flagIfOut() {
+  const c = S.clock;
+  if (S.mode !== 'local' || !c || !c.running || S.result) return false;
+  if (timeLeft(c, c.running, Date.now()) > 0) return false;
+  const loser = c.running;
+  stopClock(c, Date.now()); c[loser] = 0;
+  S.result = timeoutResult(S.chess, loser);
+  gameOver();
+  return true;
+}
+setInterval(() => { if (S.clock && S.clock.running && !S.result) { if (!flagIfOut()) updateClocks(); } }, 100);
+
+// Time control picker on the menu (remembered on this device).
+function renderTcPick() {
+  const cats = [...new Set(TIME_CONTROLS.map((t) => t.cat))];
+  $('#tc-pick').innerHTML = cats.map((cat) => {
+    const opts = TIME_CONTROLS.filter((t) => t.cat === cat);
+    return (cat === 'No timer' ? '' : `<div class="tc-cat">${cat}</div>`) + '<div class="tc-row">' +
+      opts.map((t) => `<button type="button" class="tc-opt${t.id === S.tc ? ' on' : ''}${t.id === 'none' ? ' wide' : ''}" data-tc="${t.id}">${tcLabel(t.id)}</button>`).join('') +
+      '</div>';
+  }).join('');
+  $('#tc-cur').textContent = tcLabel(S.tc);
+}
+function toggleTcPick(open) {
+  $('#tc-pick').classList.toggle('hidden', !open);
+  $('#tc-btn').setAttribute('aria-expanded', String(open));
+}
+try { const saved = localStorage.getItem('cp_tc'); if (TIME_CONTROLS.some((t) => t.id === saved)) S.tc = saved; } catch {}
+renderTcPick();
+$('#tc-btn').onclick = () => toggleTcPick($('#tc-pick').classList.contains('hidden'));
+$('#tc-pick').onclick = (e) => {
+  const b = e.target.closest('[data-tc]'); if (!b) return;
+  S.tc = b.dataset.tc;
+  try { localStorage.setItem('cp_tc', S.tc); } catch {}
+  renderTcPick(); toggleTcPick(false);
+};
 
 // ---------- Lobby wiring ----------
 function lobbyError(t) { $('#lobby-error').textContent = t; }
