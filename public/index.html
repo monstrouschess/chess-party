@@ -44,6 +44,9 @@
       <button class="btn btn-green btn-big" id="btn-local">
         <span class="btn-icon">🖥️</span><span><b>Play on this screen</b><small>Two players, one board</small></span>
       </button>
+      <button class="btn btn-big" id="btn-bots">
+        <span class="btn-icon">🤖</span><span><b>Play a bot</b><small>From total beginner to full-power engine</small></span>
+      </button>
       <button class="btn btn-big" id="btn-create">
         <span class="btn-icon">🎉</span><span><b>Create party</b><small>Get a code to send a friend</small></span>
       </button>
@@ -69,6 +72,30 @@
       <div class="setup-note" id="setup-note"></div>
       <button class="btn btn-green btn-big" id="setup-go">
         <span class="btn-icon">▶</span><span><b id="setup-go-txt">Start game</b><small id="setup-go-sub">10 min each</small></span>
+      </button>
+    </div>
+  </main>
+
+  <!-- Bot picker -->
+  <main id="bots" class="screen hidden">
+    <div class="lobby-card bots-card">
+      <div class="setup-head">
+        <button class="btn btn-flat back-btn" id="bots-back" title="Back">←</button>
+        <div>
+          <h2>Play a bot</h2>
+          <p class="muted">Pick who you want to play against</p>
+        </div>
+      </div>
+      <div class="bot-hero" id="bot-hero"></div>
+      <div class="bot-grid" id="bot-grid"></div>
+      <div class="side-pick" id="side-pick">
+        <span class="muted">I play</span>
+        <button type="button" data-side="w"><span class="pc wk"></span>White</button>
+        <button type="button" data-side="r"><span class="side-rnd">?</span>Random</button>
+        <button type="button" data-side="b"><span class="pc bk"></span>Black</button>
+      </div>
+      <button class="btn btn-green btn-big" id="bots-go">
+        <span class="btn-icon">▶</span><span><b id="bots-go-txt">Play</b><small>No clock · not rated</small></span>
       </button>
     </div>
   </main>
@@ -114,6 +141,7 @@
         <div class="panel-title" id="panel-title">Play on this screen</div>
         <div class="code-chip hidden" id="code-chip" title="Click to copy"></div>
       </div>
+      <div class="bot-say hidden" id="bot-say"><div class="bot-face" id="bot-say-face"></div><div class="bot-bubble" id="bot-say-txt"></div></div>
       <div class="status" id="status"></div>
       <div class="moves" id="moves"></div>
       <div class="chat hidden" id="chat">

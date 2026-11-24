@@ -1,6 +1,7 @@
 import { Chess } from '/lib/chess.js';
 import { resultOf, CODE_CHARS, CODE_LEN, TIME_CONTROLS, DEFAULT_TC, tcLabel, newClock, timeLeft, clockAfterMove, stopClock, timeoutResult, START_RATING, eloDelta, cleanProfile } from '/shared.js';
 import { analyseGame, GRADES, GRADE_ORDER, winPct, evalText } from '/review.js';
+import { BOTS, botById, botMove, thinkTime, warmUp } from '/bot.js';
 
 const $ = (s) => document.querySelector(s);
 const FILES = 'abcdefgh';
@@ -9,7 +10,10 @@ const VALUE = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
 
 // ---------- State ----------
 const S = {
-  mode: null,            // 'local' | 'party'
+  mode: null,            // 'local' | 'party' | 'bot'
+  bot: null,             // bot game: { id, side: 'w'|'b'|'r' (what you picked) }
+  botThinking: false,
+  botSaid: '',
   chess: new Chess(),
   orientation: 'w',      // colour shown at the bottom
   myColor: null,         // party only
@@ -58,12 +62,14 @@ function canMove(color) {
   if (S.result || S.promo || S.review) return false;
   if (S.mode === 'local') return color === turn();
   if (S.mode === 'party') return S.party.oppSeated && color === S.myColor && turn() === S.myColor;
+  if (S.mode === 'bot') return color === S.myColor && turn() === S.myColor;
   return false;
 }
 function canPre(color) {
   if (S.result || S.review) return false;
   // Premoves are only for party games; on one shared screen they'd just get in the way.
   if (S.mode === 'party') return S.party.oppSeated && color === S.myColor && turn() !== S.myColor;
+  if (S.mode === 'bot') return color === S.myColor && turn() !== S.myColor;
   return false;
 }
 
@@ -176,9 +182,11 @@ function commit(from, to, promotion, dragged) {
     S.result = resultOf(S.chess);
     saveLocal();
   }
+  if (S.mode === 'bot') { S.result = resultOf(S.chess); saveBot(); }
   sound(soundFor(mv));
   render(dragged ? null : mv);
   if (S.result) gameOver();
+  else if (S.mode === 'bot') scheduleBot(mv);
   else setTimeout(tryPremove, 80);
 }
 
@@ -436,10 +444,20 @@ function playerBar(color) {
     const on = mine ? S.party.connected : S.party.oppHere;
     dot = `<span class="dot ${on ? 'on' : 'off'}" title="${on ? 'Online' : 'Offline'}"></span>`;
   }
-  const active = !S.result && turn() === color && (S.mode === 'local' || S.party.oppSeated);
+  let avatar = `<div class="avatar pc ${color}k"></div>`;
+  if (S.mode === 'bot') {
+    const b = botById(S.bot.id);
+    if (color === S.myColor) name = `<span class="pn">${esc(PROFILE.name || 'You')}</span> <span class="prating">(${PROFILE.rating})</span> <span class="you-tag">YOU</span>`;
+    else {
+      name = `<span class="pn">${b.name}</span> <span class="prating">(${b.rating})</span> <span class="you-tag bot-tag">BOT</span>`;
+      if (S.botThinking && !S.result) dot = '<span class="thinking"><i></i><i></i><i></i></span>';
+      avatar = `<div class="avatar bot-face" style="--bot:${b.color}">${b.emoji}</div>`;
+    }
+  }
+  const active = !S.result && turn() === color && (S.mode !== 'party' || S.party.oppSeated);
   const right = S.clock ? `<div class="clock" data-clock="${color}"></div>`
     : `<div class="turn-pill ${active ? 'active' : ''}">${active ? 'To move' : ''}</div>`;
-  return `<div class="avatar pc ${color}k"></div><div class="pinfo"><div class="pname">${name} ${dot}</div><div class="caps">${caps}</div></div>` + right;
+  return `${avatar}<div class="pinfo"><div class="pname">${name} ${dot}</div><div class="caps">${caps}</div></div>` + right;
 }
 
 function statusText() {
@@ -454,16 +472,20 @@ function statusText() {
     return [`${winnerText(r.winner)} — ${r.reason}`, false];
   }
   const t = turn();
-  const who = S.mode === 'party' ? (t === S.myColor ? 'Your move' : `${oppName()}'s move`) : `${NAMES[t]} to move`;
+  const who = S.mode === 'party' ? (t === S.myColor ? 'Your move' : `${oppName()}'s move`)
+    : S.mode === 'bot' ? (t === S.myColor ? 'Your move' : `${oppName()} is thinking…`) : `${NAMES[t]} to move`;
   return [S.chess.inCheck() ? `${who} — check!` : who, false];
 }
 
 function winnerText(w) {
-  if (S.mode === 'party') return w === S.myColor ? 'You won' : `${oppName()} won`;
+  if (S.mode === 'party' || S.mode === 'bot') return w === S.myColor ? 'You won' : `${oppName()} won`;
   return `${NAMES[w]} won`;
 }
-// Your friend's chosen name in a party (falls back to "Friend").
-function oppName() { return (S.party.players.opp && S.party.players.opp.name) || 'Friend'; }
+// Your friend's chosen name in a party (falls back to "Friend"), or the bot's name.
+function oppName() {
+  if (S.mode === 'bot') return botById(S.bot.id).name;
+  return (S.party.players.opp && S.party.players.opp.name) || 'Friend';
+}
 function esc(t) { return String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
 
 function renderSide() {
@@ -493,9 +515,11 @@ function renderSide() {
     mv.scrollTop = mv.scrollHeight;
   }
 
-  const party = S.mode === 'party';
-  $('#panel-title').textContent = (party ? 'Party game' : 'Play on this screen') + ' · ' + tcLabel(S.clock ? S.clock.id : 'none');
-  $('#hint-pre').classList.toggle('hidden', !party);
+  const party = S.mode === 'party', vsBot = S.mode === 'bot';
+  $('#panel-title').textContent = vsBot ? `vs ${oppName()} (${botById(S.bot.id).rating}) · Bot game`
+    : (party ? 'Party game' : 'Play on this screen') + ' · ' + tcLabel(S.clock ? S.clock.id : 'none');
+  $('#hint-pre').classList.toggle('hidden', !party && !vsBot);
+  renderBotSay();
   $('#chat').classList.toggle('hidden', !party);
   const chip = $('#code-chip');
   chip.classList.toggle('hidden', !party || !S.party.code);
@@ -585,7 +609,7 @@ function renderEvalBar() {
 }
 
 function playerName(c) {
-  if (S.mode === 'party') return c === S.myColor ? 'You' : esc(oppName());
+  if (S.mode === 'party' || S.mode === 'bot') return c === S.myColor ? 'You' : esc(oppName());
   return NAMES[c];
 }
 
@@ -695,7 +719,7 @@ $('#rv-next').onclick = () => setIdx(S.review.idx + 1);
 $('#rv-last').onclick = () => setIdx(S.review.moves.length, true);
 $('#rv-flip').onclick = () => { S.orientation = S.orientation === 'w' ? 'b' : 'w'; render(); };
 $('#rv-close').onclick = () => exitReview();
-$('#rv-again').onclick = () => { if (S.mode === 'local') exitReview(false); playAgain(); };
+$('#rv-again').onclick = () => { if (S.mode !== 'party') exitReview(false); playAgain(); };
 $('#btn-review').onclick = () => startReview();
 $('#modal-review').onclick = () => startReview();
 document.addEventListener('keydown', (e) => {
@@ -711,7 +735,7 @@ function fillModal() {
   const r = S.result;
   let title, icon = '🏆';
   if (!r.winner) { title = 'Draw'; icon = '🤝'; }
-  else { title = winnerText(r.winner); if (S.mode === 'party' && r.winner !== S.myColor) icon = '😵'; }
+  else { title = winnerText(r.winner); if ((S.mode === 'party' || S.mode === 'bot') && r.winner !== S.myColor) icon = '😵'; }
   $('#modal-title').textContent = title;
   $('#modal-sub').textContent = `by ${r.reason}`;
   $('#modal-icon').textContent = icon;
@@ -737,6 +761,7 @@ function gameOver() {
   clearPremoves(); clearSel();
   stopClock(S.clock, Date.now());
   if (S.mode === 'local') saveLocal();
+  if (S.mode === 'bot') { cancelBot(); saveBot(); botSays(!S.result.winner ? 'draw' : S.result.winner === S.myColor ? 'lose' : 'win'); }
   sound('end');
   fillModal();
   setTimeout(() => { if (S.result) $('#modal').classList.remove('hidden'); }, 250);
@@ -752,6 +777,7 @@ $('#btn-again').onclick = () => playAgain();
 
 function playAgain() {
   if (S.mode === 'local') { newLocalGame(); hideModal(); }
+  else if (S.mode === 'bot') { startBot(S.bot.id, S.bot.side); }
   else { send({ type: 'rematch' }); }
 }
 
@@ -768,6 +794,9 @@ $('#btn-resign').onclick = () => {
   if (S.mode === 'local') {
     S.result = { winner: turn() === 'w' ? 'b' : 'w', reason: 'resignation' };
     saveLocal();
+    gameOver();
+  } else if (S.mode === 'bot') {
+    S.result = { winner: S.myColor === 'w' ? 'b' : 'w', reason: 'resignation' };
     gameOver();
   } else send({ type: 'resign' });
 };
@@ -811,7 +840,7 @@ function sound(kind) {
 
 // ---------- Screens ----------
 function show(screen) {
-  for (const s of ['lobby', 'setup', 'game']) $('#' + s).classList.toggle('hidden', screen !== s);
+  for (const s of ['lobby', 'setup', 'bots', 'game']) $('#' + s).classList.toggle('hidden', screen !== s);
   $('#btn-home').classList.toggle('hidden', screen === 'lobby');
   if (screen === 'lobby') renderProfile();
   window.scrollTo(0, 0);
@@ -823,7 +852,7 @@ function goHome() {
   if (live && !confirm('Leave this game? It counts as a loss.')) return;
   if (live) applyAbandonLoss();
   hideModal();
-  leaveParty(); S.mode = null; ss.del('cp_mode'); ss.del('cp_local'); resetBoardState(); show('lobby');
+  leaveParty(); S.mode = null; S.bot = null; ss.del('cp_mode'); ss.del('cp_local'); ss.del('cp_bot'); resetBoardState(); show('lobby');
 }
 
 // ---------- Profile & rating (saved on this device) ----------
@@ -871,6 +900,7 @@ function applyAbandonLoss() {
 
 function resetBoardState() {
   exitReview(false);
+  cancelBot(); S.botSaid = '';
   S.clock = null; S.lowWarned = {};
   S.chess = new Chess(); S.result = null; S.lastMove = null;
   clearSel(); clearPremoves(); cancelDrag(); S.promo = null; S.arrows = []; S.marks.clear();
@@ -901,6 +931,97 @@ function startLocal(restore) {
   show('game'); render();
 }
 function newLocalGame() { resetBoardState(); S.clock = newClock(S.tc); saveLocal(); sound('move'); render(); }
+
+// ---------- Bot games ----------
+let botTimer = null, botGen = 0;
+function saveBot() {
+  ss.set('cp_bot', JSON.stringify({ bot: S.bot, myColor: S.myColor, said: S.botSaid,
+    moves: S.chess.history({ verbose: true }).map((m) => ({ from: m.from, to: m.to, promotion: m.promotion })), result: S.result }));
+}
+function startBot(id, side, restore) {
+  leaveParty();
+  resetBoardState();
+  const b = botById(id);
+  S.mode = 'bot'; S.bot = { id: b.id, side };
+  S.myColor = side === 'r' ? (Math.random() < 0.5 ? 'w' : 'b') : side;
+  if (restore) {
+    try {
+      const d = JSON.parse(restore);
+      S.bot = d.bot; S.myColor = d.myColor; S.botSaid = d.said || '';
+      for (const m of d.moves) S.chess.move(m);
+      const h = S.chess.history({ verbose: true }); const l = h[h.length - 1];
+      if (l) S.lastMove = { from: l.from, to: l.to };
+      S.result = d.result || resultOf(S.chess);
+    } catch { S.chess = new Chess(); S.result = null; }
+  } else botSays('hi');
+  S.orientation = S.myColor;
+  ss.set('cp_mode', 'bot');
+  saveBot();
+  show('game'); render();
+  if (!restore) sound('move');
+  if (!S.result && turn() !== S.myColor) scheduleBot(S.chess.history({ verbose: true }).pop());
+}
+function cancelBot() { botGen++; clearTimeout(botTimer); botTimer = null; S.botThinking = false; }
+// The bot thinks (Stockfish) while a "human" delay runs; it moves when both are done.
+function scheduleBot(lastMove) {
+  cancelBot();
+  const gen = botGen, bot = botById(S.bot.id);
+  S.botThinking = true; render();
+  const wait = new Promise((res) => { botTimer = setTimeout(res, thinkTime(S.chess, lastMove)); });
+  const pick = botMove(S.chess.fen(), bot);
+  Promise.all([pick, wait]).then(([mv]) => {
+    if (gen !== botGen || S.mode !== 'bot' || S.result) return;
+    S.botThinking = false;
+    applyBotMove(mv);
+  });
+}
+function applyBotMove(m) {
+  let mv = null;
+  try { mv = m && S.chess.move(m); } catch { mv = null; }
+  if (!mv) { const all = S.chess.moves({ verbose: true }); if (!all.length) return; mv = S.chess.move(all[0]); }
+  S.lastMove = { from: mv.from, to: mv.to };
+  S.result = resultOf(S.chess);
+  saveBot();
+  sound(soundFor(mv));
+  refreshSelection();
+  render(mv);
+  if (S.result) gameOver();
+  else setTimeout(tryPremove, 80);
+}
+function botSays(kind) {
+  const b = botById(S.bot.id);
+  S.botSaid = b.say[kind] || '';
+  const t = $('#bot-say-txt'); t.classList.remove('pop'); void t.offsetWidth; t.classList.add('pop');
+}
+function renderBotSay() {
+  const box = $('#bot-say');
+  const on = S.mode === 'bot' && !!S.botSaid;
+  box.classList.toggle('hidden', !on);
+  if (!on) return;
+  const b = botById(S.bot.id);
+  const face = $('#bot-say-face'); face.textContent = b.emoji; face.style.setProperty('--bot', b.color);
+  $('#bot-say-txt').textContent = S.botSaid;
+}
+
+// Bot picker screen: every bot visible at once.
+let pickBot = 'luna', pickSide = 'w';
+try { const v = JSON.parse(localStorage.getItem('cp_botpick')); if (v) { if (BOTS.some((b) => b.id === v.id)) pickBot = v.id; if ('wbr'.includes(v.side)) pickSide = v.side; } } catch {}
+function renderBotPick() {
+  const b = botById(pickBot);
+  $('#bot-hero').innerHTML = `<div class="bot-face" style="--bot:${b.color}">${b.emoji}</div>` +
+    `<div><h3>${b.name}<small>${b.rating}</small></h3><p>${b.blurb}</p><div class="bot-quote">“${esc(b.say.hi)}”</div></div>`;
+  $('#bot-grid').innerHTML = BOTS.map((x) => `<button type="button" class="bot-opt${x.id === pickBot ? ' on' : ''}" data-bot="${x.id}">` +
+    `<div class="bot-face" style="--bot:${x.color}">${x.emoji}</div><b>${x.name}</b><small>${x.rating}</small></button>`).join('');
+  for (const el of $('#side-pick').querySelectorAll('[data-side]')) el.classList.toggle('on', el.dataset.side === pickSide);
+  $('#bots-go-txt').textContent = `Play ${b.name}`;
+  try { localStorage.setItem('cp_botpick', JSON.stringify({ id: pickBot, side: pickSide })); } catch {}
+}
+function openBots() { lobbyError(''); warmUp(); renderBotPick(); show('bots'); }
+$('#bot-grid').onclick = (e) => { const x = e.target.closest('[data-bot]'); if (x) { pickBot = x.dataset.bot; renderBotPick(); } };
+$('#side-pick').onclick = (e) => { const x = e.target.closest('[data-side]'); if (x) { pickSide = x.dataset.side; renderBotPick(); } };
+$('#bots-back').onclick = () => show('lobby');
+$('#bots-go').onclick = () => startBot(pickBot, pickSide);
+$('#btn-bots').onclick = () => openBots();
 
 // ---------- Party (WebSocket) ----------
 let ws = null, retry = 0, retryTimer = null;
@@ -1151,6 +1272,9 @@ function toast(t) {
     joinParty(hash);
   } else if (ss.get('cp_mode') === 'local') {
     startLocal(ss.get('cp_local'));
+  } else if (ss.get('cp_mode') === 'bot' && ss.get('cp_bot')) {
+    warmUp();
+    startBot(null, 'w', ss.get('cp_bot'));
   }
 })();
 
