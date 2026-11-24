@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { Chess } from 'chess.js';
-import { resultOf, CODE_CHARS, CODE_LEN, TIME_CONTROLS, DEFAULT_TC, newClock, timeLeft, clockAfterMove, stopClock, timeoutResult } from './public/shared.js';
+import { resultOf, CODE_CHARS, CODE_LEN, TIME_CONTROLS, DEFAULT_TC, newClock, timeLeft, clockAfterMove, stopClock, timeoutResult, eloDelta, cleanProfile } from './public/shared.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -56,6 +56,8 @@ function newRoom(tc) {
     code: newCode(), seats: { w: null, b: null }, socks: { w: null, b: null },
     chess: new Chess(), moves: [], result: null, rematch: new Set(), gameNo: 1, lastSeen: Date.now(),
     chat: [], chatId: 0, // chat: [{ id, by: seat token, text }]
+    profiles: {}, // seat token -> { name, rating, games }
+    rated: null,  // rating changes for the finished game
   };
   rooms.set(room.code, room);
   return room;
@@ -68,6 +70,8 @@ function stateFor(room, color) {
     oppSeated: !!room.seats[o], oppHere: !!room.socks[o],
     rematch: { me: room.rematch.has(color), them: room.rematch.has(o) },
     tc: room.tc, clock: clockView(room.clock),
+    players: { me: room.profiles[room.seats[color]] || null, opp: room.profiles[room.seats[o]] || null },
+    rated: room.rated,
   };
 }
 
@@ -86,7 +90,7 @@ function checkFlag(room) {
   if (left <= 0) {
     const loser = c.running;
     stopClock(c, Date.now()); c[loser] = 0;
-    room.result = timeoutResult(room.chess, loser);
+    endGame(room, timeoutResult(room.chess, loser));
     return true;
   }
   room.flagTimer = setTimeout(() => { if (checkFlag(room)) broadcast(room); }, left + 30);
@@ -97,6 +101,21 @@ function endGame(room, result) {
   room.result = result;
   stopClock(room.clock, Date.now());
   clearTimeout(room.flagTimer); room.flagTimer = null;
+  rate(room);
+}
+
+// Every finished party game is rated (one rating for all time controls).
+// Games that end before both players have moved are "aborted" and don't count.
+function rate(room) {
+  room.rated = null;
+  const pw = room.profiles[room.seats.w], pb = room.profiles[room.seats.b];
+  if (!pw || !pb || room.moves.length < 2) return;
+  const sw = room.result.winner === 'w' ? 1 : room.result.winner === 'b' ? 0 : 0.5;
+  const dw = eloDelta(pw.rating, pb.rating, sw, pw.games), db = eloDelta(pb.rating, pw.rating, 1 - sw, pb.games);
+  const row = (p, d) => ({ before: p.rating, after: Math.max(100, p.rating + d), delta: Math.max(100, p.rating + d) - p.rating });
+  room.rated = { gameNo: room.gameNo, w: row(pw, dw), b: row(pb, db) };
+  pw.rating = room.rated.w.after; pw.games++;
+  pb.rating = room.rated.b.after; pb.games++;
 }
 
 function broadcast(room) {
@@ -107,7 +126,10 @@ function send(ws, msg) {
   if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg));
 }
 
-function seat(ws, room, color, token) {
+function seat(ws, room, color, token, profile) {
+  // First time in this room: take the profile the browser sends. Coming back: keep the server's rating, update the name.
+  const p = cleanProfile(profile);
+  if (room.profiles[token]) room.profiles[token].name = p.name; else room.profiles[token] = p;
   const old = room.socks[color];
   if (old && old !== ws) { old.room = null; send(old, { type: 'error', msg: 'You opened this party in another tab.', fatal: true }); old.close(); }
   room.seats[color] = token;
@@ -136,7 +158,7 @@ function handle(ws, msg) {
     case 'create': {
       detach(ws);
       const r = newRoom(String(msg.tc || ''));
-      seat(ws, r, Math.random() < 0.5 ? 'w' : 'b', String(msg.token));
+      seat(ws, r, Math.random() < 0.5 ? 'w' : 'b', String(msg.token), msg.profile);
       break;
     }
     case 'join': {
@@ -148,7 +170,7 @@ function handle(ws, msg) {
       if (!color) color = ['w', 'b'].find((c) => !r.seats[c]);
       if (!color) return send(ws, { type: 'error', msg: 'That party is already full.', fatal: true });
       if (ws.room && ws.room !== r) detach(ws);
-      seat(ws, r, color, token);
+      seat(ws, r, color, token, msg.profile);
       break;
     }
     case 'move': {
@@ -192,7 +214,7 @@ function handle(ws, msg) {
         room.socks = { w: room.socks.b, b: room.socks.w };
         for (const c of ['w', 'b']) if (room.socks[c]) room.socks[c].color = c;
         room.chess = new Chess(); room.moves = []; room.result = null; room.rematch.clear(); room.gameNo++;
-        room.clock = newClock(room.tc); clearTimeout(room.flagTimer); room.flagTimer = null;
+        room.clock = newClock(room.tc); clearTimeout(room.flagTimer); room.flagTimer = null; room.rated = null;
       }
       broadcast(room);
       break;

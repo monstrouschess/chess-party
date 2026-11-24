@@ -20,12 +20,12 @@ export const TIME_CONTROLS = [
   { id: '1+0', cat: 'Bullet' }, { id: '1+1', cat: 'Bullet' }, { id: '2+1', cat: 'Bullet' },
   { id: '3+0', cat: 'Blitz' }, { id: '3+2', cat: 'Blitz' }, { id: '5+0', cat: 'Blitz' },
   { id: '10+0', cat: 'Rapid' }, { id: '15+10', cat: 'Rapid' }, { id: '30+0', cat: 'Rapid' },
-  { id: 'none', cat: 'No timer' },
+  { id: 'none', cat: 'Endless' },
 ];
 export const DEFAULT_TC = '10+0';
 
 export function tcLabel(id) {
-  if (!id || id === 'none') return 'No timer';
+  if (!id || id === 'none') return 'Endless ∞';
   const [m, s] = id.split('+');
   return s === '0' ? `${m} min` : `${m} | ${s}`;
 }
@@ -75,4 +75,22 @@ export function timeoutResult(chess, color) {
   for (const row of chess.board()) for (const p of row) if (p && p.color === other && p.type !== 'k') left.push(p.type);
   const cantMate = left.length === 0 || (left.length === 1 && (left[0] === 'b' || left[0] === 'n'));
   return cantMate ? { winner: null, reason: 'timeout vs insufficient material' } : { winner: other, reason: 'timeout' };
+}
+
+// ---------- Rating (Elo) ----------
+// One rating for every time control, like a single chess.com-style number. New players start at 800.
+export const START_RATING = 800;
+// Points won/lost: score is 1 (win), 0.5 (draw) or 0 (loss). New players move faster (K=40 for their first 30 games).
+export function eloDelta(mine, theirs, score, gamesPlayed) {
+  const k = gamesPlayed < 30 ? 40 : 20;
+  const expected = 1 / (1 + 10 ** ((theirs - mine) / 400));
+  return Math.round(k * (score - expected));
+}
+// Clean up whatever a browser sends us as its profile.
+export function cleanProfile(p) {
+  p = p && typeof p === 'object' ? p : {};
+  const name = String(p.name || '').replace(/[^\p{L}\p{N} _.\-']/gu, '').replace(/\s+/g, ' ').trim().slice(0, 16) || 'Player';
+  const rating = Math.min(3000, Math.max(100, Math.round(Number(p.rating)) || START_RATING));
+  const games = Math.min(1e6, Math.max(0, Math.floor(Number(p.games)) || 0));
+  return { name, rating, games };
 }

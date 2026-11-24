@@ -1,5 +1,5 @@
 import { Chess } from '/lib/chess.js';
-import { resultOf, CODE_CHARS, CODE_LEN, TIME_CONTROLS, DEFAULT_TC, tcLabel, newClock, timeLeft, clockAfterMove, stopClock, timeoutResult } from '/shared.js';
+import { resultOf, CODE_CHARS, CODE_LEN, TIME_CONTROLS, DEFAULT_TC, tcLabel, newClock, timeLeft, clockAfterMove, stopClock, timeoutResult, START_RATING, eloDelta, cleanProfile } from '/shared.js';
 import { analyseGame, GRADES, GRADE_ORDER, winPct, evalText } from '/review.js';
 
 const $ = (s) => document.querySelector(s);
@@ -19,7 +19,7 @@ const S = {
   premoves: [], premoveColor: null,
   arrows: [], marks: new Set(),
   promo: null, drag: null, right: null,
-  party: { code: null, gameNo: 0, oppSeated: false, oppHere: false, rematchMe: false, rematchThem: false, connected: false, chat: [] },
+  party: { code: null, gameNo: 0, oppSeated: false, oppHere: false, rematchMe: false, rematchThem: false, connected: false, chat: [], players: { me: null, opp: null }, rated: null },
   review: null,          // set while Game Review is open
   tc: DEFAULT_TC,        // time control picked on the menu
   clock: null,           // { id, base, inc, w, b, running, since } or null for no timer
@@ -399,7 +399,7 @@ function renderOverlay() {
     el.innerHTML = `<div class="wait-card"><h3>Waiting for your friend…</h3>
       <div class="muted">Send them this code. They click <b>Join party</b> and type it in.</div>
       <div class="big-code">${S.party.code || '·····'}</div>
-      <div class="muted" style="margin:-8px 0 14px">⏱️ ${tcLabel(S.clock ? S.clock.id : 'none')}</div>
+      <div class="muted" style="margin:-8px 0 14px">⏱️ ${tcLabel(S.clock ? S.clock.id : 'none')} · ★ Rated</div>
       <div class="row"><button class="btn btn-green" data-copy="${S.party.code}">Copy code</button>
       <button class="btn" data-copy="${link}">Copy invite link</button></div>
       <div class="spinner"></div></div>`;
@@ -430,7 +430,9 @@ function playerBar(color) {
   let name = NAMES[color], dot = '';
   if (S.mode === 'party') {
     const mine = color === S.myColor;
-    name = mine ? `You (${NAMES[color]})` : `Friend (${NAMES[color]})`;
+    const p = mine ? S.party.players.me : S.party.players.opp;
+    name = p ? `<span class="pn">${esc(p.name)}</span> <span class="prating">(${p.rating})</span>${mine ? ' <span class="you-tag">YOU</span>' : ''}`
+      : (mine ? 'You' : 'Friend');
     const on = mine ? S.party.connected : S.party.oppHere;
     dot = `<span class="dot ${on ? 'on' : 'off'}" title="${on ? 'Online' : 'Offline'}"></span>`;
   }
@@ -452,14 +454,17 @@ function statusText() {
     return [`${winnerText(r.winner)} — ${r.reason}`, false];
   }
   const t = turn();
-  const who = S.mode === 'party' ? (t === S.myColor ? 'Your move' : "Friend's move") : `${NAMES[t]} to move`;
+  const who = S.mode === 'party' ? (t === S.myColor ? 'Your move' : `${oppName()}'s move`) : `${NAMES[t]} to move`;
   return [S.chess.inCheck() ? `${who} — check!` : who, false];
 }
 
 function winnerText(w) {
-  if (S.mode === 'party') return w === S.myColor ? 'You won' : 'Your friend won';
+  if (S.mode === 'party') return w === S.myColor ? 'You won' : `${oppName()} won`;
   return `${NAMES[w]} won`;
 }
+// Your friend's chosen name in a party (falls back to "Friend").
+function oppName() { return (S.party.players.opp && S.party.players.opp.name) || 'Friend'; }
+function esc(t) { return String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
 
 function renderSide() {
   const bottom = S.orientation, top = bottom === 'w' ? 'b' : 'w';
@@ -580,7 +585,7 @@ function renderEvalBar() {
 }
 
 function playerName(c) {
-  if (S.mode === 'party') return c === S.myColor ? 'You' : 'Friend';
+  if (S.mode === 'party') return c === S.myColor ? 'You' : esc(oppName());
   return NAMES[c];
 }
 
@@ -711,6 +716,17 @@ function fillModal() {
   $('#modal-sub').textContent = `by ${r.reason}`;
   $('#modal-icon').textContent = icon;
   $('#modal-review').classList.toggle('hidden', !S.chess.history().length);
+  // Rating change, chess.com style: "812 (+12)".
+  const mr = $('#modal-rating');
+  const rt = S.mode === 'party' && S.party.rated && S.party.rated[S.myColor];
+  if (S.mode !== 'party') mr.classList.add('hidden');
+  else {
+    mr.classList.remove('hidden');
+    if (rt) {
+      const cls = rt.delta > 0 ? 'up' : rt.delta < 0 ? 'down' : 'same';
+      mr.innerHTML = `Rating ${rt.after} <span class="${cls}">(${rt.delta > 0 ? '+' : ''}${rt.delta})</span>`;
+    } else mr.innerHTML = '<span class="same">Game aborted · rating unchanged</span>';
+  }
   const a = $('#modal-again');
   if (S.mode === 'party') {
     a.textContent = S.party.rematchMe ? 'Rematch sent…' : S.party.rematchThem ? 'Accept rematch' : 'Rematch';
@@ -729,6 +745,7 @@ function gameOver() {
 function hideModal() { $('#modal').classList.add('hidden'); }
 $('#modal-x').onclick = hideModal;
 $('#modal-view').onclick = hideModal;
+$('#modal-home').onclick = () => goHome();
 $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') hideModal(); });
 $('#modal-again').onclick = () => playAgain();
 $('#btn-again').onclick = () => playAgain();
@@ -794,8 +811,62 @@ function sound(kind) {
 
 // ---------- Screens ----------
 function show(screen) {
-  $('#lobby').classList.toggle('hidden', screen !== 'lobby');
-  $('#game').classList.toggle('hidden', screen !== 'game');
+  for (const s of ['lobby', 'setup', 'game']) $('#' + s).classList.toggle('hidden', screen !== s);
+  $('#btn-home').classList.toggle('hidden', screen === 'lobby');
+  if (screen === 'lobby') renderProfile();
+  window.scrollTo(0, 0);
+}
+
+// Leave whatever you're doing and go back to the menu.
+function goHome() {
+  const live = S.mode === 'party' && !S.result && S.party.oppSeated && S.chess.history().length >= 2;
+  if (live && !confirm('Leave this game? It counts as a loss.')) return;
+  if (live) applyAbandonLoss();
+  hideModal();
+  leaveParty(); S.mode = null; ss.del('cp_mode'); ss.del('cp_local'); resetBoardState(); show('lobby');
+}
+
+// ---------- Profile & rating (saved on this device) ----------
+function loadProfile() {
+  let p = null;
+  try { p = JSON.parse(localStorage.getItem('cp_profile')); } catch {}
+  const c = cleanProfile(p || {});
+  if (!p || !p.name) c.name = '';
+  return c;
+}
+let PROFILE = loadProfile();
+function saveProfile() { try { localStorage.setItem('cp_profile', JSON.stringify(PROFILE)); } catch {} renderProfile(); }
+function profileToSend() { return { ...PROFILE, name: PROFILE.name || 'Player' }; }
+function renderProfile() {
+  const inp = $('#my-name');
+  if (document.activeElement !== inp) inp.value = PROFILE.name;
+  $('#my-rating').textContent = PROFILE.rating;
+  $('#my-games').textContent = PROFILE.games ? `${PROFILE.games} rated game${PROFILE.games === 1 ? '' : 's'}` : 'Rating';
+  $('#top-rating').textContent = `★ ${PROFILE.rating}`;
+}
+$('#my-name').addEventListener('input', (e) => {
+  PROFILE.name = e.target.value.replace(/[^\p{L}\p{N} _.\-']/gu, '').slice(0, 16);
+  if (e.target.value !== PROFILE.name) e.target.value = PROFILE.name;
+  saveProfile();
+});
+// Take the rating result the server sent, once per game.
+function applyRated(s) {
+  const rt = s.rated && s.rated.gameNo === s.gameNo && s.rated[s.color];
+  if (!rt) return;
+  const key = `cp_rated_${s.code}_${s.gameNo}`;
+  if (ss.get(key)) return;
+  ss.set(key, '1');
+  PROFILE.rating = rt.after; PROFILE.games++;
+  saveProfile();
+}
+// Walking out of a rated game is a loss (the server rates it for your friend too).
+function applyAbandonLoss() {
+  const me = S.party.players.me, opp = S.party.players.opp;
+  const key = `cp_rated_${S.party.code}_${S.party.gameNo}`;
+  if (!me || !opp || ss.get(key)) return;
+  ss.set(key, '1');
+  PROFILE.rating = Math.max(100, me.rating + eloDelta(me.rating, opp.rating, 0, me.games)); PROFILE.games++;
+  saveProfile();
 }
 
 function resetBoardState() {
@@ -845,7 +916,7 @@ function connect(then) {
     ws = null; S.party.connected = false;
     if (S.mode === 'party' && S.party.code) {
       render();
-      retryTimer = setTimeout(() => connect(() => send({ type: 'join', code: S.party.code, token: TOKEN })), Math.min(4000, 400 * 2 ** retry++));
+      retryTimer = setTimeout(() => connect(() => send({ type: 'join', code: S.party.code, token: TOKEN, profile: profileToSend() })), Math.min(4000, 400 * 2 ** retry++));
     } else if (pendingLobby) { lobbyError("Couldn't reach the server. Is it running?"); pendingLobby = false; }
   };
 }
@@ -853,12 +924,12 @@ function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
 function withSocket(fn) { if (ws && ws.readyState === 1) fn(); else connect(fn); }
 
 let pendingLobby = false;
-function createParty() { lobbyError(''); pendingLobby = true; withSocket(() => send({ type: 'create', token: TOKEN, tc: S.tc })); }
+function createParty() { lobbyError(''); pendingLobby = true; withSocket(() => send({ type: 'create', token: TOKEN, tc: S.tc, profile: profileToSend() })); }
 function joinParty(code) {
   code = code.toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (code.length !== CODE_LEN) return lobbyError(`Codes are ${CODE_LEN} characters long.`);
   lobbyError(''); pendingLobby = true;
-  withSocket(() => send({ type: 'join', code, token: TOKEN }));
+  withSocket(() => send({ type: 'join', code, token: TOKEN, profile: profileToSend() }));
 }
 function leaveParty() {
   if (S.mode === 'party') send({ type: 'leave' });
@@ -893,7 +964,7 @@ function onChat(m) {
   const theirs = !m.reset && fresh.filter((x) => !x.mine);
   if (theirs && theirs.length) {
     blip(660, 0.12, 0.08, 'sine'); blip(990, 0.14, 0.07, 'sine', 0.07);
-    if (!chatVisible()) toast('💬 Friend: ' + theirs[theirs.length - 1].text);
+    if (!chatVisible()) toast(`💬 ${oppName()}: ` + theirs[theirs.length - 1].text);
   }
 }
 function chatVisible() {
@@ -909,7 +980,7 @@ function renderChat() {
   }
   for (const x of S.party.chat) {
     const d = document.createElement('div'); d.className = 'cm ' + (x.mine ? 'me' : 'them');
-    const b = document.createElement('b'); b.textContent = x.mine ? 'You' : 'Friend';
+    const b = document.createElement('b'); b.textContent = x.mine ? 'You' : oppName();
     d.append(b, document.createTextNode(x.text)); // textContent only: never inject HTML
     log.append(d);
   }
@@ -937,6 +1008,8 @@ function onState(s) {
   if (location.hash !== '#' + s.code) history.replaceState(null, '', '#' + s.code);
   const hadOpp = P.oppSeated;
   P.oppSeated = s.oppSeated; P.oppHere = s.oppHere; P.rematchMe = s.rematch.me; P.rematchThem = s.rematch.them;
+  P.players = s.players || { me: null, opp: null }; P.rated = s.rated || null;
+  applyRated(s);
   if (!hadOpp && s.oppSeated && P.gameNo !== -1) sound('move');
 
   const newGame = s.gameNo !== P.gameNo;
@@ -1005,42 +1078,53 @@ function flagIfOut() {
 }
 setInterval(() => { if (S.clock && S.clock.running && !S.result) { if (!flagIfOut()) updateClocks(); } }, 100);
 
-// Time control picker on the menu (remembered on this device).
+// ---------- Timer settings screen ----------
+// Shown after "Play on this screen" or "Create party"; every option is on screen at once.
+const CAT_ICON = { Bullet: '🚀', Blitz: '⚡', Rapid: '⏱️', Endless: '♾️' };
+let setupFor = 'local';
 function renderTcPick() {
   const cats = [...new Set(TIME_CONTROLS.map((t) => t.cat))];
   $('#tc-pick').innerHTML = cats.map((cat) => {
     const opts = TIME_CONTROLS.filter((t) => t.cat === cat);
-    return (cat === 'No timer' ? '' : `<div class="tc-cat">${cat}</div>`) + '<div class="tc-row">' +
-      opts.map((t) => `<button type="button" class="tc-opt${t.id === S.tc ? ' on' : ''}${t.id === 'none' ? ' wide' : ''}" data-tc="${t.id}">${tcLabel(t.id)}</button>`).join('') +
+    return `<div class="tc-cat"><span>${CAT_ICON[cat] || ''}</span>${cat}</div><div class="tc-row">` +
+      opts.map((t) => `<button type="button" class="tc-opt${t.id === S.tc ? ' on' : ''}${t.id === 'none' ? ' wide' : ''}" data-tc="${t.id}">${t.id === 'none' ? 'No clock — take your time' : tcLabel(t.id)}</button>`).join('') +
       '</div>';
   }).join('');
-  $('#tc-cur').textContent = tcLabel(S.tc);
+  const none = S.tc === 'none';
+  $('#setup-go-sub').textContent = none ? 'No clock' : `${tcLabel(S.tc)} each`;
 }
-function toggleTcPick(open) {
-  $('#tc-pick').classList.toggle('hidden', !open);
-  $('#tc-btn').setAttribute('aria-expanded', String(open));
+function openSetup(kind) {
+  setupFor = kind;
+  lobbyError('');
+  $('#setup-sub').textContent = kind === 'local' ? 'Play on this screen · two players, one board' : 'Create party · your friend gets the same timer';
+  $('#setup-go-txt').textContent = kind === 'local' ? 'Start game' : 'Create party';
+  $('#setup-note').innerHTML = kind === 'local' ? 'Same-screen games are <b>not rated</b>.' : '★ Party games are <b>rated</b> — win to raise your rating.';
+  renderTcPick();
+  show('setup');
 }
 try { const saved = localStorage.getItem('cp_tc'); if (TIME_CONTROLS.some((t) => t.id === saved)) S.tc = saved; } catch {}
-renderTcPick();
-$('#tc-btn').onclick = () => toggleTcPick($('#tc-pick').classList.contains('hidden'));
 $('#tc-pick').onclick = (e) => {
   const b = e.target.closest('[data-tc]'); if (!b) return;
   S.tc = b.dataset.tc;
   try { localStorage.setItem('cp_tc', S.tc); } catch {}
-  renderTcPick(); toggleTcPick(false);
+  renderTcPick();
 };
+$('#setup-back').onclick = () => show('lobby');
+$('#setup-go').onclick = () => (setupFor === 'local' ? startLocal() : createParty());
 
 // ---------- Lobby wiring ----------
-function lobbyError(t) { $('#lobby-error').textContent = t; }
-$('#btn-local').onclick = () => startLocal();
-$('#btn-create').onclick = () => createParty();
+function lobbyError(t) { $('#lobby-error').textContent = t; if (t && !$('#setup').classList.contains('hidden')) show('lobby'); }
+$('#btn-local').onclick = () => openSetup('local');
+$('#btn-create').onclick = () => openSetup('party');
 $('#join-form').onsubmit = (e) => { e.preventDefault(); joinParty($('#join-code').value); };
 $('#join-code').addEventListener('input', (e) => {
   const allowed = new Set(CODE_CHARS);
   e.target.value = [...e.target.value.toUpperCase()].filter((ch) => allowed.has(ch)).join('').slice(0, CODE_LEN);
 });
-$('#btn-menu').onclick = () => { leaveParty(); S.mode = null; ss.del('cp_mode'); ss.del('cp_local'); resetBoardState(); show('lobby'); };
-$('#logo').onclick = (e) => { e.preventDefault(); $('#btn-menu').click(); };
+$('#btn-menu').onclick = () => goHome();
+$('#btn-home').onclick = () => goHome();
+$('#logo').onclick = (e) => { e.preventDefault(); goHome(); };
+renderProfile();
 $('#code-chip').onclick = () => copy(S.party.code);
 
 function copy(text) {
@@ -1061,7 +1145,7 @@ function toast(t) {
   if (ss.get('cp_mode') === 'party' && savedCode) {
     S.party.code = savedCode;
     pendingLobby = true;
-    connect(() => send({ type: 'join', code: savedCode, token: TOKEN }));
+    connect(() => send({ type: 'join', code: savedCode, token: TOKEN, profile: profileToSend() }));
   } else if (hash.length === CODE_LEN) {
     $('#join-code').value = hash;
     joinParty(hash);

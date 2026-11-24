@@ -11,6 +11,13 @@
 <body>
   <header class="topbar">
     <a class="logo" href="/" id="logo"><span class="logo-knight">♞</span> Chess Party</a>
+    <div class="top-right">
+      <div class="top-rating" id="top-rating" title="Your rating"></div>
+      <button class="home-btn hidden" id="btn-home" title="Home">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.2 2.6 11.1a1 1 0 0 0 1.3 1.5l.9-.8V20a1 1 0 0 0 1 1h4.4v-5.6h3.6V21h4.4a1 1 0 0 0 1-1v-8.2l.9.8a1 1 0 0 0 1.3-1.5z"/></svg>
+        <span>Home</span>
+      </button>
+    </div>
   </header>
 
   <!-- Menu -->
@@ -20,14 +27,19 @@
         <div class="mini-board" aria-hidden="true"></div>
         <div>
           <h1>Play chess with a friend</h1>
-          <p class="muted">No accounts. Share one screen, or send a friend a 5-letter code.</p>
+          <p class="muted">Share one screen, or send a friend a 5-letter code.</p>
         </div>
       </div>
-      <div class="tc-wrap">
-        <button class="btn btn-big tc-btn" id="tc-btn" type="button" aria-expanded="false">
-          <span class="btn-icon">⏱️</span><span><b id="tc-cur">10 min</b><small>Time for each player · tap to change</small></span><span class="tc-caret">▾</span>
-        </button>
-        <div class="tc-pick hidden" id="tc-pick"></div>
+      <div class="profile-card">
+        <div class="profile-avatar pc wn" aria-hidden="true"></div>
+        <div class="profile-main">
+          <label class="profile-label" for="my-name">Your name</label>
+          <input id="my-name" maxlength="16" placeholder="Pick a name" spellcheck="false" autocomplete="off">
+        </div>
+        <div class="profile-rating">
+          <b id="my-rating">800</b>
+          <small id="my-games">Rating</small>
+        </div>
       </div>
       <button class="btn btn-green btn-big" id="btn-local">
         <span class="btn-icon">🖥️</span><span><b>Play on this screen</b><small>Two players, one board</small></span>
@@ -40,6 +52,24 @@
         <button class="btn" type="submit" id="btn-join">Join party</button>
       </form>
       <p class="lobby-error" id="lobby-error"></p>
+    </div>
+  </main>
+
+  <!-- Timer settings (shown after "Play on this screen" or "Create party") -->
+  <main id="setup" class="screen hidden">
+    <div class="lobby-card">
+      <div class="setup-head">
+        <button class="btn btn-flat back-btn" id="setup-back" title="Back">←</button>
+        <div>
+          <h2>Timer settings</h2>
+          <p class="muted" id="setup-sub">Play on this screen</p>
+        </div>
+      </div>
+      <div class="tc-pick" id="tc-pick"></div>
+      <div class="setup-note" id="setup-note"></div>
+      <button class="btn btn-green btn-big" id="setup-go">
+        <span class="btn-icon">▶</span><span><b id="setup-go-txt">Start game</b><small id="setup-go-sub">10 min each</small></span>
+      </button>
     </div>
   </main>
 
@@ -101,7 +131,7 @@
         <button class="btn btn-green" id="btn-again">New game</button>
       </div>
       <button class="btn btn-green hidden" id="btn-review">★ Game Review</button>
-      <button class="btn btn-flat" id="btn-menu">← Back to menu</button>
+      <button class="btn home-wide" id="btn-menu">🏠 Home</button>
       <p class="hint">Right-click a square to mark it red. Right-click + drag to draw an arrow. Left-click clears them.
         <span id="hint-pre">Move during your friend's turn to <b>premove</b>.</span></p>
       </div>
@@ -115,9 +145,13 @@
       <div class="modal-trophy" id="modal-icon">🏆</div>
       <h2 id="modal-title">White won</h2>
       <p class="muted" id="modal-sub">by checkmate</p>
+      <div class="modal-rating hidden" id="modal-rating"></div>
       <button class="btn btn-green btn-wide" id="modal-review">★ Game Review</button>
       <button class="btn btn-wide" id="modal-again">Rematch</button>
-      <button class="btn btn-wide" id="modal-view">View board</button>
+      <div class="modal-row">
+        <button class="btn" id="modal-view">View board</button>
+        <button class="btn" id="modal-home">🏠 Home</button>
+      </div>
     </div>
   </div>
 
