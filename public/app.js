@@ -1,7 +1,7 @@
 import { Chess } from '/lib/chess.js';
 import { resultOf, CODE_CHARS, CODE_LEN, TIME_CONTROLS, DEFAULT_TC, tcLabel, newClock, timeLeft, clockAfterMove, stopClock, timeoutResult, START_RATING, eloDelta, cleanProfile } from '/shared.js';
 import { analyseGame, GRADES, GRADE_ORDER, winPct, evalText } from '/review.js';
-import { BOTS, botById, botMove, thinkTime, warmUp } from '/bot.js';
+import { BOTS, botById, botMove, thinkTime, warmUp, judge, reactLine } from '/bot.js';
 
 const $ = (s) => document.querySelector(s);
 const FILES = 'abcdefgh';
@@ -933,7 +933,7 @@ function startLocal(restore) {
 function newLocalGame() { resetBoardState(); S.clock = newClock(S.tc); saveLocal(); sound('move'); render(); }
 
 // ---------- Bot games ----------
-let botTimer = null, botGen = 0;
+let botTimer = null, botGen = 0, botBase = null;
 function saveBot() {
   ss.set('cp_bot', JSON.stringify({ bot: S.bot, myColor: S.myColor, said: S.botSaid,
     moves: S.chess.history({ verbose: true }).map((m) => ({ from: m.from, to: m.to, promotion: m.promotion })), result: S.result }));
@@ -960,14 +960,25 @@ function startBot(id, side, restore) {
   show('game'); render();
   if (!restore) sound('move');
   if (!S.result && turn() !== S.myColor) scheduleBot(S.chess.history({ verbose: true }).pop());
+  else if (!S.result) measureBase();
 }
-function cancelBot() { botGen++; clearTimeout(botTimer); botTimer = null; S.botThinking = false; }
+function cancelBot() { botGen++; botBase = null; clearTimeout(botTimer); botTimer = null; S.botThinking = false; }
 // The bot thinks (Stockfish) while a "human" delay runs; it moves when both are done.
 function scheduleBot(lastMove) {
+  const base = botBase;
   cancelBot();
   const gen = botGen, bot = botById(S.bot.id);
   S.botThinking = true; render();
   const wait = new Promise((res) => { botTimer = setTimeout(res, thinkTime(S.chess, lastMove)); });
+  // First see how good your move was (to react to it), then pick the bot's reply.
+  if (base) Promise.all([base, judge(S.chess.fen())]).then(([before, after]) => {
+    if (gen !== botGen || S.result || before == null) return;
+    const swing = after - before; // + means your move helped the bot
+    if (swing >= 18) botSaysText(reactLine(bot.id, 'roast', S.botSaid));
+    else if (swing <= -12) botSaysText(reactLine(bot.id, 'scared', S.botSaid));
+    // Grabbing a big piece that leaves the bot worse off also scares it.
+    else if (lastMove && 'nbrq'.includes(lastMove.captured || 'x') && swing < 8 && after < 40) botSaysText(reactLine(bot.id, 'scared', S.botSaid));
+  });
   const pick = botMove(S.chess.fen(), bot);
   Promise.all([pick, wait]).then(([mv]) => {
     if (gen !== botGen || S.mode !== 'bot' || S.result) return;
@@ -986,12 +997,18 @@ function applyBotMove(m) {
   refreshSelection();
   render(mv);
   if (S.result) gameOver();
-  else setTimeout(tryPremove, 80);
+  else { measureBase(); setTimeout(tryPremove, 80); }
 }
-function botSays(kind) {
-  const b = botById(S.bot.id);
-  S.botSaid = b.say[kind] || '';
+// How the bot rates its chances before you move (win %, bot's point of view).
+function measureBase() {
+  botBase = judge(S.chess.fen()).then((p) => 100 - p).catch(() => null);
+}
+function botSays(kind) { botSaysText(botById(S.bot.id).say[kind] || ''); }
+function botSaysText(text) {
+  S.botSaid = text;
+  renderBotSay();
   const t = $('#bot-say-txt'); t.classList.remove('pop'); void t.offsetWidth; t.classList.add('pop');
+  if (S.mode === 'bot' && text) saveBot();
 }
 function renderBotSay() {
   const box = $('#bot-say');

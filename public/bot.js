@@ -31,6 +31,47 @@ export const BOTS = [
 ];
 export const botById = (id) => BOTS.find((b) => b.id === id) || BOTS[2];
 
+// What each bot says after your move. roast = you blundered, scared = you found something strong.
+const REACT = {
+  pip: {
+    roast: ['Even I saw that one! 🐣', 'Was that on purpose? I’m confused 😅', 'My baby brother wouldn’t play that lol', 'Oopsie! Can I have that? 🐣'],
+    scared: ['Wait what? How did you do that?! 😨', 'Nooo, my pieces! 🥺', 'That’s not fair, you’re too good!', 'I’m telling my mum 😭'],
+  },
+  momo: {
+    roast: ['I dropped my bamboo watching that move 🐼', 'Bro, even pandas know that’s bad', 'I’ll take that, thanks 😋', 'Did you play that with your eyes closed?'],
+    scared: ['Uh oh. This panda is panicking 🐼💦', 'Okay okay, slow down!', 'That was rude. Good, but rude.', 'Can we pretend you didn’t see that?'],
+  },
+  luna: {
+    roast: ['Even the moon saw that coming 🌙', 'Hmm, the stars did NOT approve that move.', 'Thank you for the gift ✨', 'Was that a typo?'],
+    scared: ['Oh no… that was beautiful 😳', 'The stars are turning against me 🌠', 'Okay, I didn’t see that one.', 'You’ve been practising, haven’t you?'],
+  },
+  rex: {
+    roast: ['HAHA! Dino snack! 🦖🍖', 'Was that move from the Stone Age?', 'RAWR, thanks for the free piece!', 'You blundered harder than the asteroid hit us.'],
+    scared: ['RAWR?! …I mean, uh, rawr 😰', 'My tiny arms can’t defend this!', 'Okay that one actually hurt 🦖💥', 'Who taught you that?!'],
+  },
+  nova: {
+    roast: ['Houston, YOU have a problem 🚀', 'That move just crash-landed.', 'Abort mission! …oh wait, that’s your piece.', 'Engines detected: a blunder. Big one.'],
+    scared: ['Alert! Alert! Hull breach! 🚨', 'That was a rocket of a move 😬', 'Recalculating… recalculating…', 'Okay, you’ve got real thrusters.'],
+  },
+  sage: {
+    roast: ['Patience, young one. That was not it. 🦉', 'A wise player would take that back. You can’t.', 'Hoo… hoo… what was that?', 'Every blunder is a lesson. That was a big lesson.'],
+    scared: ['Hoo! A strong move indeed. 🦉', 'The student surprises the teacher.', 'I must think carefully now…', 'Impressive. I did not foresee this.'],
+  },
+  titan: {
+    roast: ['…really? 🗿', 'Mistake noted.', 'Thank you.', 'Hm. Disappointing.'],
+    scared: ['…hm. 😐', 'Interesting.', 'You are stronger than you look.', 'That was… correct.'],
+  },
+  apex: {
+    roast: ['BLUNDER DETECTED. WIN PROBABILITY UPDATED: 99.9% 🤖', 'ERROR: HUMAN MOVE NOT FOUND IN OPENING BOOK OF GOOD MOVES.', 'THANK YOU FOR YOUR DONATION.', 'LOL. (THAT IS ROBOT FOR LAUGHING.)'],
+    scared: ['WARNING: UNEXPECTED STRONG MOVE. 😳', 'CPU TEMPERATURE RISING…', 'THAT WAS… OPTIMAL? RECALIBRATING.', 'SYSTEM NERVOUS. THIS IS NEW.'],
+  },
+};
+export function reactLine(id, kind, last) {
+  const list = (REACT[id] || REACT.luna)[kind];
+  const pool = list.filter((l) => l !== last);
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
 // ---------- Engine (one Worker just for bots, separate from Game Review) ----------
 let worker = null, waiters = [], onLine = null, queue = Promise.resolve(), readyP = null;
 function eng() {
@@ -69,6 +110,31 @@ function search(fen, bot) {
     const best = await until((l) => l.startsWith('bestmove'));
     onLine = null;
     return { lines: Object.values(lines), best: best.split(' ')[1] };
+  });
+  queue = job.catch(() => {});
+  return job;
+}
+
+// Quick, honest evaluation of a position (used to react to your moves, not to pick the bot's).
+// Returns the win chance (0-100) for the side to move.
+export function judge(fen) {
+  const job = queue.then(async () => {
+    await eng();
+    let score = null;
+    onLine = (l) => {
+      if (!l.startsWith('info') || !l.includes(' pv ')) return;
+      const s = l.match(/ score (cp|mate) (-?\d+)/);
+      if (s) score = s[1] === 'cp' ? { cp: +s[2] } : { mate: +s[2] };
+    };
+    worker.postMessage('setoption name MultiPV value 1');
+    worker.postMessage('position fen ' + fen);
+    worker.postMessage('go depth 10 movetime 400');
+    await until((l) => l.startsWith('bestmove'));
+    onLine = null;
+    if (!score) return 50;
+    if (score.mate !== undefined) return score.mate > 0 ? 100 : 0;
+    const cp = Math.max(-1500, Math.min(1500, score.cp));
+    return 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * cp)) - 1);
   });
   queue = job.catch(() => {});
   return job;
