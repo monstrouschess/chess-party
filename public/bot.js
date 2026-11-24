@@ -4,7 +4,7 @@
 import { Chess } from '/lib/chess.js';
 
 export const BOTS = [
-  { id: 'pip',   name: 'Pip',   rating: 250,  emoji: '🐣', color: '#f5c542', blurb: 'Just learned how the horse moves.',
+  { id: 'pip',   name: 'Omar',  rating: 250,  emoji: '🐣', color: '#f5c542', blurb: 'Just learned how the horse moves.',
     depth: 1,  mpv: 5, window: 400, random: 0.45,
     say: { hi: 'Hiii! Is the horsey the one that jumps? 🐣', win: 'I WON?! Wait till I tell my mum!', lose: 'Good game! You are really good 🥺', draw: 'A draw! That means we are both winners!' } },
   { id: 'momo',  name: 'Momo',  rating: 500,  emoji: '🐼', color: '#d9d9d9', blurb: 'Plays for fun, snacks in between.',
