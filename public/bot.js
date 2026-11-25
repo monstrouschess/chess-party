@@ -4,7 +4,7 @@
 import { Chess } from '/lib/chess.js';
 
 export const BOTS = [
-  { id: 'pip',   name: 'Pip',   rating: 250,  emoji: '🐣', color: '#f5c542', blurb: 'Just learned how the horse moves.',
+  { id: 'pip',   name: 'Omar',  rating: 250,  emoji: '🐣', color: '#f5c542', blurb: 'Just learned how the horse moves.',
     depth: 1,  mpv: 5, window: 400, random: 0.45,
     say: { hi: 'Hiii! Is the horsey the one that jumps? 🐣', win: 'I WON?! Wait till I tell my mum!', lose: 'Good game! You are really good 🥺', draw: 'A draw! That means we are both winners!' } },
   { id: 'momo',  name: 'Momo',  rating: 500,  emoji: '🐼', color: '#d9d9d9', blurb: 'Plays for fun, snacks in between.',
@@ -25,7 +25,7 @@ export const BOTS = [
   { id: 'titan', name: 'Titan', rating: 2000, emoji: '🗿', color: '#8fa3b0', blurb: 'Strong and calm. Very hard to beat.',
     depth: 14, mpv: 2, window: 18,  random: 0,
     say: { hi: '…', win: 'As expected.', lose: '…impressive. Respect. 🗿', draw: 'Hm. A draw. Acceptable.' } },
-  { id: 'apex',  name: 'Apex',  rating: 2600, emoji: '🤖', color: '#4cc3d9', blurb: 'Full-power engine. Good luck.',
+  { id: 'apex',  name: 'Liam',  rating: 2600, emoji: '🤖', color: '#4cc3d9', blurb: 'Full-power engine. Good luck.',
     depth: 18, mpv: 1, window: 0,   random: 0, movetime: 2500,
     say: { hi: 'ANALYSIS STARTED. PROBABILITY OF YOUR WIN: 0.01% 🤖', win: 'CHECKMATE CONFIRMED. GG, HUMAN.', lose: 'ERROR… ERROR… THIS WAS NOT CALCULATED.', draw: 'DRAW DETECTED. INTERESTING.' } },
 ];
