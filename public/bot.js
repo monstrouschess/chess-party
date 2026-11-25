@@ -25,9 +25,9 @@ export const BOTS = [
   { id: 'titan', name: 'Titan', rating: 2000, emoji: '🗿', color: '#8fa3b0', blurb: 'Strong and calm. Very hard to beat.',
     depth: 14, mpv: 2, window: 18,  random: 0,
     say: { hi: '…', win: 'As expected.', lose: '…impressive. Respect. 🗿', draw: 'Hm. A draw. Acceptable.' } },
-  { id: 'apex',  name: 'Liam',  rating: 2600, emoji: '🤖', color: '#4cc3d9', blurb: 'Full-power engine. Good luck.',
+  { id: 'apex',  name: 'Liam',  rating: 2600, emoji: '😎', color: '#4cc3d9', blurb: 'Full-power engine. Talks a LOT of trash.',
     depth: 18, mpv: 1, window: 0,   random: 0, movetime: 2500,
-    say: { hi: 'ANALYSIS STARTED. PROBABILITY OF YOUR WIN: 0.01% 🤖', win: 'CHECKMATE CONFIRMED. GG, HUMAN.', lose: 'ERROR… ERROR… THIS WAS NOT CALCULATED.', draw: 'DRAW DETECTED. INTERESTING.' } },
+    say: { hi: 'g you really clicked on me? bold 😎', win: 'g you suck 💀 gg go next', lose: 'g WHAT THE HELL 😭 nah that’s not real', draw: 'g a draw?? we running this back' } },
 ];
 export const botById = (id) => BOTS.find((b) => b.id === id) || BOTS[2];
 
@@ -62,8 +62,8 @@ const REACT = {
     scared: ['…hm. 😐', 'Interesting.', 'You are stronger than you look.', 'That was… correct.'],
   },
   apex: {
-    roast: ['BLUNDER DETECTED. WIN PROBABILITY UPDATED: 99.9% 🤖', 'ERROR: HUMAN MOVE NOT FOUND IN OPENING BOOK OF GOOD MOVES.', 'THANK YOU FOR YOUR DONATION.', 'LOL. (THAT IS ROBOT FOR LAUGHING.)'],
-    scared: ['WARNING: UNEXPECTED STRONG MOVE. 😳', 'CPU TEMPERATURE RISING…', 'THAT WAS… OPTIMAL? RECALIBRATING.', 'SYSTEM NERVOUS. THIS IS NEW.'],
+    roast: ['g you suck 💀', 'g what the hell was that 😭', 'g you’re cooked fr', 'nah g, uninstall', 'g thanks for the free piece lmao', 'g who taught you chess 💀'],
+    scared: ['g what the hell?? 😳', 'g calm down bro', 'nah g that was actually cold', 'g who you been practising with 😰', 'g chill chill chill'],
   },
 };
 export function reactLine(id, kind, last) {
